@@ -1,0 +1,40 @@
+services:
+  redis:
+    image: redis:7.4-alpine
+    container_name: starhunt-redis
+    restart: always
+    # sets disk persistence
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  postgres:
+    image: postgres:16-bookworm
+    container_name: starhunt-postgres
+    env_file: ".env"
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fermi -d fermi_explorer"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  adminer:
+    image: adminer:latest
+    container_name: starhunt-adminer
+    env_file: ".env"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  redis_data:
