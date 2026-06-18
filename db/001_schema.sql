@@ -10,7 +10,8 @@ CREATE TABLE milestones (
     id bigserial PRIMARY KEY,
     event_id bigint NOT NULL REFERENCES events(id) ON DELETE CASCADE,
     external_id text NOT NULL UNIQUE,
-    milestone_type text NOT NULL,
+    milestone_type text NOT NULL, -- e.g., `notice`, `conesearch`
+    milestone_subtype text NOT NULL,  -- e.g., a kafka notice topic, `ztf-fink-query`
     milestone_seq integer NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
 

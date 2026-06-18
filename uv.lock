@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.13"
 
 [[package]]
@@ -152,14 +152,23 @@ wheels = [
 
 [[package]]
 name = "gcn-notice-parser"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bd/68/c8a446e058df55064353a7b38fee509c4f0e387e38894b5325b25fdab16c/gcn_notice_parser-0.1.0.tar.gz", hash = "sha256:0c0ccbb4592ce5f4d3d956a0ca31d04067e8ae3da7af7d01ebed2f83dd763842", size = 209418, upload-time = "2026-05-19T11:33:41.005Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/50/4d/d650be1b9a5b3de5c8a0652bd2fd777a16ff86e1055f0be64498adf22e1e/gcn_notice_parser-0.1.1.tar.gz", hash = "sha256:482f322107929bcb2ade76000538ddb1899513e354f3a0f639ccf73d2a4ea383", size = 209436, upload-time = "2026-06-15T15:17:40.752Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/ab/39f637f07be4e798145325be12313d265f23c4005bfbd156b85b0688a712/gcn_notice_parser-0.1.0-py3-none-any.whl", hash = "sha256:8bd7c341d8005f32e00ae41aba8936e7dce84281b040df2b7d8040d3b83e5c0d", size = 37009, upload-time = "2026-05-19T11:33:42.917Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/c2/0f65623490f82d2cd7bba78e476ea4a08d6435896a6d05086e6cf968f922/gcn_notice_parser-0.1.1-py3-none-any.whl", hash = "sha256:2f9121ea3c105d8fe9d72e1df78d4064ab869e1e807ee9d08ff291eeb76bd3cf", size = 37011, upload-time = "2026-06-15T15:17:41.947Z" },
+]
+
+[[package]]
+name = "iniconfig"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
 ]
 
 [[package]]
@@ -281,6 +290,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pluggy"
+version = "1.6.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3", size = 69412, upload-time = "2025-05-15T12:30:07.975Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
+]
+
+[[package]]
 name = "psycopg"
 version = "3.3.4"
 source = { registry = "https://pypi.org/simple" }
@@ -398,6 +416,31 @@ wheels = [
 ]
 
 [[package]]
+name = "pygments"
+version = "2.20.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c3/b2/bc9c9196916376152d655522fdcebac55e66de6603a76a02bca1b6414f6c/pygments-2.20.0.tar.gz", hash = "sha256:6757cd03768053ff99f3039c1a36d6c0aa0b263438fcab17520b30a303a82b5f", size = 4955991, upload-time = "2026-03-29T13:29:33.898Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f4/7e/a72dd26f3b0f4f2bf1dd8923c85f7ceb43172af56d63c7383eb62b332364/pygments-2.20.0-py3-none-any.whl", hash = "sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176", size = 1231151, upload-time = "2026-03-29T13:29:30.038Z" },
+]
+
+[[package]]
+name = "pytest"
+version = "9.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "iniconfig" },
+    { name = "packaging" },
+    { name = "pluggy" },
+    { name = "pygments" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/84/0e/b5858858d74958632c49b72cb25a3976ff9f632397626715be71c89d3971/pytest-9.1.0.tar.gz", hash = "sha256:41dd9148c08072446394cefd3d79701701335a9f4cae69ba92e39f6c7f5c061c", size = 1634181, upload-time = "2026-06-13T18:52:45.983Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8b/5a/ba30a81239b909821b3153e303e7def45178bf353da4f72380e6c5e8793b/pytest-9.1.0-py3-none-any.whl", hash = "sha256:8ebb0e7888bdf2bdfc602ec51f8f62d50200af37356c74e503c79a94f5c81f32", size = 386453, upload-time = "2026-06-13T18:52:44.045Z" },
+]
+
+[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 source = { registry = "https://pypi.org/simple" }
@@ -511,13 +554,14 @@ dependencies = [
 dev = [
     { name = "black" },
     { name = "isort" },
+    { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.4.1" },
     { name = "gcn-kafka", specifier = ">=0.3.4" },
-    { name = "gcn-notice-parser", specifier = ">=0.1.0" },
+    { name = "gcn-notice-parser", specifier = ">=0.1.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },
     { name = "redis", specifier = ">=8.0.0" },
     { name = "rq", specifier = ">=2.9.1" },
@@ -528,6 +572,7 @@ requires-dist = [
 dev = [
     { name = "black", specifier = ">=26.5.1" },
     { name = "isort", specifier = ">=8.0.1" },
+    { name = "pytest", specifier = ">=9.1.0" },
 ]
 
 [[package]]

@@ -15,12 +15,30 @@ services:
     container_name: starhunt-postgres
     env_file: ".env"
     ports:
-      - "${POSTGRES_PORT}:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./db:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U fermi -d fermi_explorer"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres-test:
+    image: postgres:16-bookworm
+    profiles: ["test"]
+    container_name: starhunt-postgres-test
+    environment:
+      POSTGRES_DB: starhunt_test
+      POSTGRES_USER: starhunt_test
+      POSTGRES_PASSWORD: starhunt_test
+    ports:
+      - "${POSTGRES_TEST_PORT:-55432}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U starhunt_test -d starhunt_test"]
       interval: 5s
       timeout: 5s
       retries: 10
