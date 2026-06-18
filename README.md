@@ -18,6 +18,8 @@ uv run rq-dashboard --redis-url "redis://${REDIS_HOST}:${REDIS_PORT}/${REDIS_DB}
 ```shell
 docker compose --profile test up -d postgres-test
 uv run pytest
+# to perform smoke test against live endpoints
+uv run pytest --smoke
 ```
 
 ## Linter rules

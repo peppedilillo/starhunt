@@ -10,6 +10,7 @@ from .utils import is_tz_aware
 
 FINK_ZTF_CONESEARCH_URL = "https://api.ztf.fink-portal.org/api/v1/conesearch"
 MAX_CONESEARCH_RADIUS_ARCSEC = 18_000.0  # 5 degrees
+MAX_NALERT = 1_000
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ def conesearch_fink_ztf(
     startdate: datetime,
     stopdate: datetime,
     *,
+    max_nalert: int = MAX_NALERT,
     url: str = FINK_ZTF_CONESEARCH_URL,
     opener=request.urlopen,
 ) -> FinkConesearchResult:
@@ -41,8 +43,7 @@ def conesearch_fink_ztf(
 
     The query is centered on ``ra`` and ``dec`` in degrees, with ``radius`` in
     arcseconds. ``startdate`` and ``stopdate`` must be timezone-aware
-    datetimes; they are converted to Fink's ``startdate`` plus ``window``
-    request shape, where ``window`` is measured in days.
+    datetimes; they are converted to UTC before being sent to Fink.
     Fink caps conesearch radii at 18,000 arcseconds. Larger requested radii are
     accepted but capped in the outbound request.
 
@@ -52,6 +53,7 @@ def conesearch_fink_ztf(
         radius: Search radius in arcseconds. Must be positive.
         startdate: Inclusive lower bound for the alert first-detection time.
         stopdate: Exclusive upper bound for the alert first-detection time.
+        max_nalert: Maximum number of alerts to return.
         url: Fink conesearch endpoint URL. Intended for tests and alternate deployments.
         opener: Callable compatible with ``urllib.request.urlopen``. Intended for tests.
 
@@ -76,13 +78,29 @@ def conesearch_fink_ztf(
         raise ValueError("dec must be between -90 and 90 degrees")
     if radius <= 0:
         raise ValueError("radius must be positive")
+    if not isinstance(max_nalert, int) or isinstance(max_nalert, bool):
+        raise ValueError("max_nalert must be an integer")
+    if max_nalert <= 0:
+        raise ValueError("max_nalert must be positive")
+
+    startdate_utc = (
+        startdate.astimezone(timezone.utc)
+        .replace(tzinfo=None)
+        .isoformat(sep=" ", timespec="milliseconds")
+    )
+    stopdate_utc = (
+        stopdate.astimezone(timezone.utc)
+        .replace(tzinfo=None)
+        .isoformat(sep=" ", timespec="milliseconds")
+    )
 
     payload = {
         "ra": ra,
         "dec": dec,
         "radius": min(radius, MAX_CONESEARCH_RADIUS_ARCSEC),
-        "startdate": _fink_datetime(startdate),
-        "window": (stopdate - startdate).total_seconds() / 86_400,
+        "startdate": startdate_utc,
+        "stopdate": stopdate_utc,
+        "n": max_nalert,
         "output-format": "json",
     }
     data = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -95,11 +113,3 @@ def conesearch_fink_ztf(
         )
     )
     return FinkConesearchResult(request=payload, content=response.read())
-
-
-def _fink_datetime(value: datetime) -> str:
-    return (
-        value.astimezone(timezone.utc)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "")
-    )

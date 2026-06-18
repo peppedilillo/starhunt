@@ -42,7 +42,7 @@ def test_conesearch_rejects_timezone_naive_dates():
         )
 
 
-def test_conesearch_requires_positive_time_window():
+def test_conesearch_requires_stopdate_after_startdate():
     start = datetime(2026, 1, 1, tzinfo=UTC)
 
     with pytest.raises(ValueError, match="stopdate"):
@@ -55,7 +55,7 @@ def test_conesearch_requires_positive_time_window():
         )
 
 
-def test_conesearch_caps_radius_and_computes_window():
+def test_conesearch_caps_radius_and_uses_stopdate():
     opener = FakeOpener()
 
     result = conesearch_fink_ztf(
@@ -76,12 +76,14 @@ def test_conesearch_caps_radius_and_computes_window():
     assert result.request["ra"] == 193.822
     assert result.request["dec"] == 2.89732
     assert result.request["radius"] == 18_000
-    assert result.request["startdate"] == "2026-01-01T00:00:00.000"
-    assert result.request["window"] == pytest.approx(0.5)
+    assert result.request["startdate"] == "2026-01-01 00:00:00.000"
+    assert result.request["stopdate"] == "2026-01-01 12:00:00.000"
+    assert result.request["n"] == 1_000
+    assert "window" not in result.request
     assert result.request["output-format"] == "json"
 
 
-def test_conesearch_formats_startdate_in_utc():
+def test_conesearch_formats_dates_in_utc():
     opener = FakeOpener()
 
     conesearch_fink_ztf(
@@ -93,7 +95,21 @@ def test_conesearch_formats_startdate_in_utc():
         opener=opener,
     )
 
-    assert opener.payload()["startdate"] == "2026-01-01T00:00:00.000"
+    assert opener.payload()["startdate"] == "2026-01-01 00:00:00.000"
+    assert opener.payload()["stopdate"] == "2026-01-02 00:00:00.000"
+
+
+@pytest.mark.parametrize("max_nalert", [0, -1, 1.5, True])
+def test_conesearch_rejects_invalid_max_nalert(max_nalert):
+    with pytest.raises(ValueError, match="max_nalert"):
+        conesearch_fink_ztf(
+            ra=193.822,
+            dec=2.89732,
+            radius=5,
+            startdate=datetime(2026, 1, 1, tzinfo=UTC),
+            stopdate=datetime(2026, 1, 2, tzinfo=UTC),
+            max_nalert=max_nalert,
+        )
 
 
 def test_conesearch_result_preserves_raw_bytes_and_parses_json():
@@ -126,3 +142,21 @@ def test_conesearch_result_rejects_non_list_json():
 
     with pytest.raises(ValueError, match="JSON list"):
         result.json()
+
+
+@pytest.mark.smoke
+def test_conesearch_fink_ztf_live_api_smoke():
+    result = conesearch_fink_ztf(
+        ra=193.822,
+        dec=2.89732,
+        radius=5,
+        startdate=datetime(2021, 6, 10, 5, 59, 37, tzinfo=UTC),
+        stopdate=datetime(2021, 6, 17, 5, 59, 37, tzinfo=UTC),
+        max_nalert=1,
+    )
+
+    rows = result.json()
+
+    assert isinstance(rows, list)
+    assert len(rows) == 1
+    assert isinstance(rows[0], dict)
