@@ -1,17 +1,17 @@
-import os
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Literal
 
 import click
-import psycopg
 from confluent_kafka import Message
 from gcn_kafka import Consumer
-from psycopg import Connection
 from gcn_parser.fermi import parse_fermi_gbm_alert
 from gcn_parser.fermi import parse_fermi_gbm_fin_pos
 from gcn_parser.fermi import parse_fermi_gbm_flt_pos
 from gcn_parser.fermi import parse_fermi_gbm_gnd_pos
+import psycopg
+from psycopg import Connection
 
 
 @dataclass
@@ -71,9 +71,7 @@ def write_message(
 ):
     """Writes a Kafka message to disk."""
     topic = message.topic()
-    filepath = (
-        outdir / f"{topic}_{message.partition()}_{message.offset()}.{SUFFIXES[topic]}"
-    )
+    filepath = outdir / f"{topic}_{message.partition()}_{message.offset()}.{SUFFIXES[topic]}"
     filepath.write_bytes(message.value())
     return filepath
 
@@ -189,7 +187,7 @@ def insert_message(
     "output_directory",
     type=click.Path(path_type=Path, file_okay=False),
 )
-@click.option("--group-id", default=None, help="Kafka consumer group ID.")
+@click.option("--group-id", default=None, help="Kafka consumer group ID.",)
 @click.option(
     "--offset",
     type=click.Choice(["earliest", "latest"]),
@@ -214,9 +212,7 @@ def main(
                     click.echo(message.error(), err=True)
                     continue
 
-                click.echo(
-                    f"Received message {message.offset()} over topic {message.topic()}"
-                )
+                click.echo(f"Received message {message.offset()} over topic {message.topic()}")
                 filepath = write_message(message=message, outdir=output_directory)
                 click.echo(f"  Wrote message to {filepath}.")
                 insert_message(message=message, filepath=filepath, db_conn=conn)

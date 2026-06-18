@@ -1,16 +1,16 @@
 from collections import defaultdict
 from dataclasses import dataclass
-from pathlib import Path
 import os
+from pathlib import Path
 
 import psycopg
 import pytest
 
-from starhunt.main import PARSERS
 from starhunt.main import insert_message
+from starhunt.main import PARSERS
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = ROOT / "tests" / "fixtures"
+FIXTURES = ROOT / "tests" / "fixtures" / "notices"
 SCHEMA = ROOT / "db" / "001_schema.sql"
 TEST_DATABASE_URL = os.environ.get(
     "STARHUNT_TEST_DATABASE_URL",
