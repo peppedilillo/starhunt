@@ -12,10 +12,12 @@ CREATE TABLE milestones (
     external_id text NOT NULL UNIQUE,
     milestone_type text NOT NULL, -- e.g., `notice`, `conesearch`
     milestone_subtype text NOT NULL,  -- e.g., a kafka notice topic, `ztf-fink-query`
-    milestone_seq integer NOT NULL,
+    published_at timestamptz NOT NULL,
+    subject_time_start timestamptz NOT NULL,
+    subject_time_end timestamptz NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
 
-    UNIQUE (event_id, milestone_seq)
+    CHECK (subject_time_end >= subject_time_start)
 );
 
 CREATE TABLE artifacts (
@@ -27,8 +29,8 @@ CREATE TABLE artifacts (
     UNIQUE (milestone_id, artifact_type, uri)
 );
 
-CREATE INDEX milestones_event_seq_idx
-ON milestones (event_id, milestone_seq);
+CREATE INDEX milestones_event_published_at_idx
+ON milestones (event_id, published_at);
 
 CREATE INDEX artifacts_milestone_idx
 ON artifacts (milestone_id);

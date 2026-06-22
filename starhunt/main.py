@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 import os
 from pathlib import Path
 from typing import Literal
@@ -76,74 +77,73 @@ def write_message(
     return filepath
 
 
-def get_or_create_event(cur, external_id: str) -> int:
+def get_or_create_event(cursor, external_id: str, mission:str, instrument: str) -> int:
     """Return an event id, inserting the event when absent."""
-    cur.execute(
+    cursor.execute(
         """
         INSERT INTO events (external_id, mission, instrument)
         VALUES (%s, %s, %s)
         ON CONFLICT (external_id) DO NOTHING
         RETURNING id
         """,
-        (external_id, "Fermi", "GBM"),
+        (external_id, mission, instrument),
     )
-    row = cur.fetchone()
+    row = cursor.fetchone()
     if row is not None:
         return row[0]
 
-    cur.execute(
+    cursor.execute(
         """
         SELECT id FROM events WHERE external_id = %s
         """,
         (external_id,),
     )
-    return cur.fetchone()[0]
+    return cursor.fetchone()[0]
 
 
 def get_or_create_milestone(
-    cur,
+    cursor,
     event_id: int,
     external_id: str,
     subtype: str,
+    published_at: datetime,
+    subject_time_start: datetime,
+    subject_time_end: datetime,
 ) -> int:
     """Return a milestone id, inserting the milestone when absent."""
-    cur.execute(
+    cursor.execute(
         """
         INSERT INTO milestones (
             event_id,
             external_id,
             milestone_type,
             milestone_subtype,
-            milestone_seq
+            published_at,
+            subject_time_start,
+            subject_time_end
         )
-        VALUES (%s, %s, %s, %s,
-            (
-                SELECT COALESCE(MAX(milestone_seq), 0) + 1
-                FROM milestones
-                WHERE event_id = %s
-            )
-        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (external_id) DO NOTHING
         RETURNING id
         """,
-        (event_id, external_id, "notice", subtype, event_id),
+        (event_id, external_id, "notice", subtype, published_at, subject_time_start, subject_time_end),
     )
-    row = cur.fetchone()
+    row = cursor.fetchone()
     if row is not None:
         return row[0]
 
-    cur.execute(
+    cursor.execute(
         """
         SELECT id FROM milestones WHERE external_id = %s
         """,
         (external_id,),
     )
-    return cur.fetchone()[0]
+    return cursor.fetchone()[0]
 
 
-def insert_artifact(cur, milestone_id: int, uri: str):
+def insert_artifact(cursor, milestone_id: int, uri: str):
     """Record an artifact URI for a milestone."""
-    cur.execute(
+    cursor.execute(
         """
         INSERT INTO artifacts (milestone_id, artifact_type, uri)
         VALUES (%s, %s, %s)
@@ -162,19 +162,32 @@ def insert_message(
     """Records message to database."""
     notice = PARSERS[message.topic()](message.value())
     # TODO: mission name is hardcoded here, remember to change this once we add support for other missions
-    event_external_id = f"fermi:{notice.trig_id}"
+    mission, instrument = "Fermi", "GBM"
+    event_external_id = f"{mission}.{instrument}:{notice.trig_id}"
     artifact_uri = filepath.resolve().as_uri()
 
     try:
-        with db_conn.cursor() as cur:
-            event_id = get_or_create_event(cur, event_external_id)
+        with db_conn.cursor() as cursor:
+            event_id = get_or_create_event(
+                cursor,
+                external_id=event_external_id,
+                mission=mission,
+                instrument=instrument,
+            )
             milestone_id = get_or_create_milestone(
-                cur,
+                cursor,
                 event_id=event_id,
                 external_id=notice.ivorn,
                 subtype=message.topic(),
+                published_at=notice.alert_datetime,
+                subject_time_start=notice.burst_datetime,
+                subject_time_end=notice.burst_datetime,
             )
-            insert_artifact(cur, milestone_id, artifact_uri)
+            insert_artifact(
+                cursor,
+                milestone_id=milestone_id,
+                uri=artifact_uri,
+            )
 
         db_conn.commit()
     except Exception:
