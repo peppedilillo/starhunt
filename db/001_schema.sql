@@ -34,3 +34,33 @@ ON milestones (event_id, published_at);
 
 CREATE INDEX artifacts_milestone_idx
 ON artifacts (milestone_id);
+
+
+CREATE TABLE jobs (
+    id bigserial PRIMARY KEY,
+    event_id bigint NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    job_type text NOT NULL,
+    subject_time_start timestamptz NOT NULL,
+    subject_time_end timestamptz NOT NULL,
+    scheduled_at timestamptz NOT NULL,
+    status text NOT NULL DEFAULT 'pending',
+    attempt_count integer NOT NULL DEFAULT 0,
+    max_attempts integer NOT NULL DEFAULT 2,
+    worker_id text,
+    lease_until timestamptz,
+    started_at timestamptz,
+    completed_at timestamptz,
+    payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+    result_artifact_id bigint REFERENCES artifacts(id) ON DELETE SET NULL,
+    last_error text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+
+    CHECK (subject_time_end > subject_time_start),
+    CHECK (attempt_count >= 0 AND max_attempts > 0),
+    CHECK (status IN ('pending', 'leased', 'succeeded', 'failed', 'dead')),
+    UNIQUE (event_id, job_type, subject_time_start, subject_time_end)
+);
+
+CREATE INDEX jobs_pending_scheduled_at_idx
+ON jobs (scheduled_at)
+WHERE status = 'pending';

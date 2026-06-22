@@ -25,6 +25,9 @@ dev = [
     "pytest>=9.1.0",
 ]
 
+[project.scripts]
+consume = 'scripts.consume:main'
+
 [tool.pytest.ini_options]
 markers = [
     "smoke: tests that call live external services",

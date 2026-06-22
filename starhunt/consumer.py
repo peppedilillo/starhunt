@@ -1,10 +1,10 @@
 from dataclasses import dataclass
 from datetime import datetime
+from datetime import timedelta
 import os
 from pathlib import Path
 from typing import Literal
 
-import click
 from confluent_kafka import Message
 from gcn_kafka import Consumer
 from gcn_parser.fermi import parse_fermi_gbm_alert
@@ -13,6 +13,13 @@ from gcn_parser.fermi import parse_fermi_gbm_flt_pos
 from gcn_parser.fermi import parse_fermi_gbm_gnd_pos
 import psycopg
 from psycopg import Connection
+
+from starhunt.utils import is_tz_aware
+
+
+DEFAULT_CONESEARCH_OFFSET = timedelta(hours=12)
+DEFAULT_CONESEARCH_PERIOD = timedelta(hours=6)
+DEFAULT_CONESEARCH_TOTAL = 24
 
 
 @dataclass
@@ -31,6 +38,7 @@ TOPICS = [
 
 SUFFIXES = {t.topic: t.suffix for t in TOPICS}
 PARSERS = {t.topic: t.parser for t in TOPICS}
+ZTF_CONESEARCH_JOB_TYPE = "ztf_conesearch"
 
 
 def init_consumer(
@@ -77,7 +85,13 @@ def write_message(
     return filepath
 
 
-def get_or_create_event(cursor, external_id: str, mission:str, instrument: str) -> int:
+@dataclass
+class EventInfo:
+    event_id: int
+    is_new: bool
+
+
+def get_or_create_event(cursor, external_id: str, mission: str, instrument: str) -> EventInfo:
     """Return an event id, inserting the event when absent."""
     cursor.execute(
         """
@@ -90,7 +104,7 @@ def get_or_create_event(cursor, external_id: str, mission:str, instrument: str) 
     )
     row = cursor.fetchone()
     if row is not None:
-        return row[0]
+        return EventInfo(event_id=row[0], is_new=True)
 
     cursor.execute(
         """
@@ -98,7 +112,7 @@ def get_or_create_event(cursor, external_id: str, mission:str, instrument: str) 
         """,
         (external_id,),
     )
-    return cursor.fetchone()[0]
+    return EventInfo(event_id=cursor.fetchone()[0], is_new=False)
 
 
 def get_or_create_milestone(
@@ -154,12 +168,73 @@ def insert_artifact(cursor, milestone_id: int, uri: str):
     )
 
 
+def schedule_ztf_conesearch(
+    cursor,
+    event_id: int,
+    burst_datetime: datetime,
+    offset: timedelta,
+    period: timedelta,
+    total: int,
+):
+    """
+    Schedules ZTF conesearch for workers to execute.
+
+    Conesearch campaign covers the time interval [burst_datetime, burst_datetime + total * period)
+    with `n=total` intervals each of duration `period`. The conesearch are scheduled with an offset
+    from the conesearch stopdate equal to `offset` to give some time for alerts to be ingested and
+    distributed by the broker.
+
+
+    Args:
+        cursor: a database cursor
+        event_id: the event id, it will be used by workers to query best localization at runtime
+        burst_datetime: the conesearch campaign startdate.
+        offset: the delay between stopdate and scheduled execution
+        period: the interval between conesearch stopdate and startdate
+        total: the number of conesearch to schedule
+    """
+    if not is_tz_aware(burst_datetime):
+        raise ValueError("burst_datetime must be timezone-aware")
+    if period <= timedelta(0):
+        raise ValueError("period must be positive")
+    if offset < timedelta(0):
+        raise ValueError("offset must be non-negative")
+    if total <= 0:
+        raise ValueError("total must be positive")
+
+    for index in range(total):
+        subject_time_start = burst_datetime + index * period
+        subject_time_end = subject_time_start + period
+        scheduled_at = subject_time_end + offset
+        cursor.execute(
+            """
+            INSERT INTO jobs (
+                event_id,
+                job_type,
+                subject_time_start,
+                subject_time_end,
+                scheduled_at
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (event_id, job_type, subject_time_start, subject_time_end)
+            DO NOTHING
+            """,
+            (
+                event_id,
+                ZTF_CONESEARCH_JOB_TYPE,
+                subject_time_start,
+                subject_time_end,
+                scheduled_at,
+            ),
+        )
+
+
 def insert_message(
     message: Message,
     filepath: Path,
     db_conn: Connection,
 ):
-    """Records message to database."""
+    """Atomically records message and jobs to database."""
     notice = PARSERS[message.topic()](message.value())
     # TODO: mission name is hardcoded here, remember to change this once we add support for other missions
     mission, instrument = "Fermi", "GBM"
@@ -168,15 +243,24 @@ def insert_message(
 
     try:
         with db_conn.cursor() as cursor:
-            event_id = get_or_create_event(
+            event_info = get_or_create_event(
                 cursor,
                 external_id=event_external_id,
                 mission=mission,
                 instrument=instrument,
             )
+            if event_info.is_new:
+                schedule_ztf_conesearch(
+                    cursor,
+                    event_id=event_info.event_id,
+                    burst_datetime=notice.burst_datetime,
+                    offset=DEFAULT_CONESEARCH_OFFSET,
+                    period=DEFAULT_CONESEARCH_PERIOD,
+                    total=DEFAULT_CONESEARCH_TOTAL,
+                )
             milestone_id = get_or_create_milestone(
                 cursor,
-                event_id=event_id,
+                event_id=event_info.event_id,
                 external_id=notice.ivorn,
                 subtype=message.topic(),
                 published_at=notice.alert_datetime,
@@ -193,47 +277,3 @@ def insert_message(
     except Exception:
         db_conn.rollback()
         raise
-
-
-@click.command()
-@click.argument(
-    "output_directory",
-    type=click.Path(path_type=Path, file_okay=False),
-)
-@click.option("--group-id", default=None, help="Kafka consumer group ID.",)
-@click.option(
-    "--offset",
-    type=click.Choice(["earliest", "latest"]),
-    default="earliest",
-    show_default=True,
-    help="Offset used when no committed offset exists.",
-)
-def main(
-    output_directory: Path,
-    group_id: str | None = None,
-    offset: Literal["earliest", "latest"] = "earliest",
-):
-    """Consume GCN notices and store them in OUTPUT_DIRECTORY."""
-    output_directory.mkdir(parents=True, exist_ok=True)
-    consumer = init_consumer(offset, group_id)
-    conn = init_db_conn()
-    try:
-        consumer.subscribe([t.topic for t in TOPICS])
-        while True:
-            for message in consumer.consume(timeout=1):
-                if message.error():
-                    click.echo(message.error(), err=True)
-                    continue
-
-                click.echo(f"Received message {message.offset()} over topic {message.topic()}")
-                filepath = write_message(message=message, outdir=output_directory)
-                click.echo(f"  Wrote message to {filepath}.")
-                insert_message(message=message, filepath=filepath, db_conn=conn)
-                consumer.commit(message=message, asynchronous=False)
-                click.echo(f"  Message committed.")
-    finally:
-        consumer.close()
-
-
-if __name__ == "__main__":
-    main()

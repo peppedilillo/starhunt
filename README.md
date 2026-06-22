@@ -1,18 +1,5 @@
 # Starhunt
 
-## Queue
-
-Copy `.env.sample` to `.env`, then load it before starting workers:
-
-```shell
-set -a
-source .env
-set +a
-docker compose up -d redis
-uv run rq worker --url "redis://${REDIS_HOST}:${REDIS_PORT}/${REDIS_DB}" --with-scheduler
-uv run rq-dashboard --redis-url "redis://${REDIS_HOST}:${REDIS_PORT}/${REDIS_DB}"
-```
-
 ## Tests
 
 ```shell
