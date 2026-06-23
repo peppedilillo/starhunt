@@ -23,9 +23,11 @@ class FakeOpener:
     def __init__(self, content: bytes = b"[]"):
         self.content = content
         self.request = None
+        self.timeout = None
 
-    def __call__(self, request):
+    def __call__(self, request, *, timeout=None):
         self.request = request
+        self.timeout = timeout
         return FakeResponse(self.content)
 
     def payload(self):
@@ -37,9 +39,7 @@ def test_conesearch_rejects_timezone_naive_dates():
     naive = datetime(2026, 1, 2)
 
     with pytest.raises(ValueError, match="timezone-aware"):
-        conesearch_fink_ztf(
-            ra=1.0, dec=2.0, radius=3.0, startdate=aware, stopdate=naive
-        )
+        conesearch_fink_ztf(ra=1.0, dec=2.0, radius=3.0, startdate=aware, stopdate=naive)
 
 
 def test_conesearch_requires_stopdate_after_startdate():
@@ -68,11 +68,10 @@ def test_conesearch_caps_radius_and_uses_stopdate():
     )
 
     assert result.request == opener.payload()
-    assert (
-        opener.request.full_url == "https://api.ztf.fink-portal.org/api/v1/conesearch"
-    )
+    assert opener.request.full_url == "https://api.ztf.fink-portal.org/api/v1/conesearch"
     assert opener.request.method == "POST"
     assert opener.request.headers["Content-type"] == "application/json"
+    assert opener.timeout is None
     assert result.request["ra"] == 193.822
     assert result.request["dec"] == 2.89732
     assert result.request["radius"] == 18_000
@@ -81,6 +80,22 @@ def test_conesearch_caps_radius_and_uses_stopdate():
     assert result.request["n"] == 1_000
     assert "window" not in result.request
     assert result.request["output-format"] == "json"
+
+
+def test_conesearch_uses_explicit_timeout():
+    opener = FakeOpener()
+
+    conesearch_fink_ztf(
+        ra=193.822,
+        dec=2.89732,
+        radius=5,
+        startdate=datetime(2026, 1, 1, tzinfo=UTC),
+        stopdate=datetime(2026, 1, 2, tzinfo=UTC),
+        timeout=60,
+        opener=opener,
+    )
+
+    assert opener.timeout == 60
 
 
 def test_conesearch_formats_dates_in_utc():
@@ -113,9 +128,7 @@ def test_conesearch_rejects_invalid_max_nalert(max_nalert):
 
 
 def test_conesearch_result_preserves_raw_bytes_and_parses_json():
-    content = (
-        Path(__file__).parent / "fixtures" / "conesearches" / "sample.json"
-    ).read_bytes()
+    content = (Path(__file__).parent / "fixtures" / "conesearches" / "sample.json").read_bytes()
 
     result = conesearch_fink_ztf(
         ra=193.822,

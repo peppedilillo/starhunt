@@ -15,6 +15,13 @@ MAX_NALERT = 1_000
 
 @dataclass(frozen=True)
 class FinkConesearchResult:
+    """Fink conesearch response and request metadata.
+
+    Attributes:
+        request: JSON payload sent to the Fink conesearch endpoint.
+        content: Raw response body bytes.
+    """
+
     request: dict[str, object]
     content: bytes
 
@@ -36,6 +43,7 @@ def conesearch_fink_ztf(
     *,
     max_nalert: int = MAX_NALERT,
     url: str = FINK_ZTF_CONESEARCH_URL,
+    timeout: float | None = None,
     opener=request.urlopen,
 ) -> FinkConesearchResult:
     """
@@ -55,6 +63,7 @@ def conesearch_fink_ztf(
         stopdate: Exclusive upper bound for the alert first-detection time.
         max_nalert: Maximum number of alerts to return.
         url: Fink conesearch endpoint URL. Intended for tests and alternate deployments.
+        timeout: Optional maximum seconds to wait for the HTTP response.
         opener: Callable compatible with ``urllib.request.urlopen``. Intended for tests.
 
     Returns:
@@ -83,16 +92,8 @@ def conesearch_fink_ztf(
     if max_nalert <= 0:
         raise ValueError("max_nalert must be positive")
 
-    startdate_utc = (
-        startdate.astimezone(timezone.utc)
-        .replace(tzinfo=None)
-        .isoformat(sep=" ", timespec="milliseconds")
-    )
-    stopdate_utc = (
-        stopdate.astimezone(timezone.utc)
-        .replace(tzinfo=None)
-        .isoformat(sep=" ", timespec="milliseconds")
-    )
+    startdate_utc = startdate.astimezone(timezone.utc).replace(tzinfo=None).isoformat(sep=" ", timespec="milliseconds")
+    stopdate_utc = stopdate.astimezone(timezone.utc).replace(tzinfo=None).isoformat(sep=" ", timespec="milliseconds")
 
     payload = {
         "ra": ra,
@@ -104,12 +105,14 @@ def conesearch_fink_ztf(
         "output-format": "json",
     }
     data = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    response = opener(
-        request.Request(
-            url,
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
+    http_request = request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
     )
+    if timeout is None:
+        response = opener(http_request)
+    else:
+        response = opener(http_request, timeout=timeout)
     return FinkConesearchResult(request=payload, content=response.read())

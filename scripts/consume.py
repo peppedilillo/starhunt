@@ -3,7 +3,11 @@ from typing import Literal
 
 import click
 
-from starhunt.consumer import init_consumer, init_db_conn, TOPICS, write_message, insert_message
+from starhunt.consumer import init_consumer
+from starhunt.consumer import insert_message
+from starhunt.consumer import TOPICS
+from starhunt.consumer import write_message
+from starhunt.db import init_db_conn
 
 
 @click.command()
@@ -11,7 +15,11 @@ from starhunt.consumer import init_consumer, init_db_conn, TOPICS, write_message
     "output_directory",
     type=click.Path(path_type=Path, file_okay=False),
 )
-@click.option("--group-id", default=None, help="Kafka consumer group ID.",)
+@click.option(
+    "--group-id",
+    default=None,
+    help="Kafka consumer group ID.",
+)
 @click.option(
     "--offset",
     type=click.Choice(["earliest", "latest"]),
@@ -27,7 +35,7 @@ def main(
     """Consume GCN notices and store them in OUTPUT_DIRECTORY."""
     output_directory.mkdir(parents=True, exist_ok=True)
     consumer = init_consumer(offset, group_id)
-    conn = init_db_conn()
+    db_conn = init_db_conn()
     try:
         consumer.subscribe([t.topic for t in TOPICS])
         while True:
@@ -39,7 +47,7 @@ def main(
                 click.echo(f"Received message {message.offset()} over topic {message.topic()}")
                 filepath = write_message(message=message, outdir=output_directory)
                 click.echo(f"  Wrote message to {filepath}.")
-                insert_message(message=message, filepath=filepath, db_conn=conn)
+                insert_message(message=message, filepath=filepath, db_conn=db_conn)
                 consumer.commit(message=message, asynchronous=False)
                 click.echo(f"  Message committed.")
     finally:

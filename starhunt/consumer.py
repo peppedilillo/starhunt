@@ -3,19 +3,22 @@ from datetime import datetime
 from datetime import timedelta
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
 
 from confluent_kafka import Message
 from gcn_kafka import Consumer
+from gcn_parser import Notice
 from gcn_parser.fermi import parse_fermi_gbm_alert
 from gcn_parser.fermi import parse_fermi_gbm_fin_pos
 from gcn_parser.fermi import parse_fermi_gbm_flt_pos
 from gcn_parser.fermi import parse_fermi_gbm_gnd_pos
-import psycopg
 from psycopg import Connection
 
-from starhunt.utils import is_tz_aware
-
+from .db import get_or_create_event
+from .db import get_or_create_milestone
+from .db import insert_artifact
+from .db import Localization
+from .utils import is_tz_aware
 
 DEFAULT_CONESEARCH_OFFSET = timedelta(hours=12)
 DEFAULT_CONESEARCH_PERIOD = timedelta(hours=6)
@@ -24,9 +27,17 @@ DEFAULT_CONESEARCH_TOTAL = 24
 
 @dataclass
 class Topic:
+    """Kafka topic configuration.
+
+    Attributes:
+        topic: Kafka topic name.
+        suffix: File suffix used when persisting messages from the topic.
+        parser: Callable that parses message bytes into a notice object.
+    """
+
     topic: str
     suffix: str
-    parser: callable
+    parser: Callable
 
 
 TOPICS = [
@@ -38,14 +49,22 @@ TOPICS = [
 
 SUFFIXES = {t.topic: t.suffix for t in TOPICS}
 PARSERS = {t.topic: t.parser for t in TOPICS}
-ZTF_CONESEARCH_JOB_TYPE = "ztf_conesearch"
+ZTF_CONESEARCH_JOB_TYPE = "ztf_fink_conesearch"
 
 
 def init_consumer(
     offset: Literal["earliest", "latest"],
     group_id: str | None,
 ) -> Consumer:
-    """Create the GCN Kafka consumer from environment credentials."""
+    """Create the GCN Kafka consumer from environment credentials.
+
+    Args:
+        offset: Initial offset policy for partitions without committed offsets.
+        group_id: Optional Kafka consumer group identifier.
+
+    Returns:
+        A configured GCN Kafka consumer.
+    """
     return Consumer(
         client_id=os.environ["GCN_CLIENT_ID"],
         client_secret=os.environ["GCN_CLIENT_SECRET"],
@@ -63,109 +82,53 @@ def init_consumer(
     )
 
 
-def init_db_conn() -> Connection:
-    """Create DB connection from environment."""
-    return psycopg.connect(
-        host=os.environ["POSTGRES_HOST"],
-        port=int(os.environ["POSTGRES_PORT"]),
-        dbname=os.environ["POSTGRES_DB"],
-        user=os.environ["POSTGRES_USER"],
-        password=os.environ["POSTGRES_PASSWORD"],
-    )
-
-
 def write_message(
     message: Message,
     outdir: Path,
 ):
-    """Writes a Kafka message to disk."""
+    """Write a Kafka message to disk.
+
+    Args:
+        message: Kafka message to persist.
+        outdir: Directory where the message file should be written.
+
+    Returns:
+        Path to the written message file.
+    """
     topic = message.topic()
     filepath = outdir / f"{topic}_{message.partition()}_{message.offset()}.{SUFFIXES[topic]}"
     filepath.write_bytes(message.value())
     return filepath
 
 
-@dataclass
-class EventInfo:
-    event_id: int
-    is_new: bool
+def notice_localization(subtype: str, notice: Notice) -> Localization | None:
+    """Extract localization coordinates from a parsed notice.
 
+    Args:
+        subtype: GCN topic name for the notice.
+        notice: Parsed GCN notice.
 
-def get_or_create_event(cursor, external_id: str, mission: str, instrument: str) -> EventInfo:
-    """Return an event id, inserting the event when absent."""
-    cursor.execute(
-        """
-        INSERT INTO events (external_id, mission, instrument)
-        VALUES (%s, %s, %s)
-        ON CONFLICT (external_id) DO NOTHING
-        RETURNING id
-        """,
-        (external_id, mission, instrument),
-    )
-    row = cursor.fetchone()
-    if row is not None:
-        return EventInfo(event_id=row[0], is_new=True)
+    Returns:
+        A Localization for position notices, else None for alert notices.
 
-    cursor.execute(
-        """
-        SELECT id FROM events WHERE external_id = %s
-        """,
-        (external_id,),
-    )
-    return EventInfo(event_id=cursor.fetchone()[0], is_new=False)
-
-
-def get_or_create_milestone(
-    cursor,
-    event_id: int,
-    external_id: str,
-    subtype: str,
-    published_at: datetime,
-    subject_time_start: datetime,
-    subject_time_end: datetime,
-) -> int:
-    """Return a milestone id, inserting the milestone when absent."""
-    cursor.execute(
-        """
-        INSERT INTO milestones (
-            event_id,
-            external_id,
-            milestone_type,
-            milestone_subtype,
-            published_at,
-            subject_time_start,
-            subject_time_end
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (external_id) DO NOTHING
-        RETURNING id
-        """,
-        (event_id, external_id, "notice", subtype, published_at, subject_time_start, subject_time_end),
-    )
-    row = cursor.fetchone()
-    if row is not None:
-        return row[0]
-
-    cursor.execute(
-        """
-        SELECT id FROM milestones WHERE external_id = %s
-        """,
-        (external_id,),
-    )
-    return cursor.fetchone()[0]
-
-
-def insert_artifact(cursor, milestone_id: int, uri: str):
-    """Record an artifact URI for a milestone."""
-    cursor.execute(
-        """
-        INSERT INTO artifacts (milestone_id, artifact_type, uri)
-        VALUES (%s, %s, %s)
-        ON CONFLICT (milestone_id, artifact_type, uri)
-        DO NOTHING
-        """,
-        (milestone_id, "gcn.voevent", uri),
-    )
+    Raises:
+        ValueError: If the notice subtype is unsupported.
+    """
+    match subtype:
+        case "gcn.classic.voevent.FERMI_GBM_ALERT":
+            return None
+        case (
+            "gcn.classic.voevent.FERMI_GBM_FIN_POS"
+            | "gcn.classic.voevent.FERMI_GBM_FLT_POS"
+            | "gcn.classic.voevent.FERMI_GBM_GND_POS"
+        ):
+            return Localization(
+                ra=notice.ra,
+                dec=notice.dec,
+                err_radius=notice.error_radius,
+            )
+        case _:
+            raise ValueError(f"Unsupported milestone subtype: {subtype}")
 
 
 def schedule_ztf_conesearch(
@@ -176,22 +139,24 @@ def schedule_ztf_conesearch(
     period: timedelta,
     total: int,
 ):
-    """
-    Schedules ZTF conesearch for workers to execute.
+    """Schedule ZTF conesearch jobs for workers to execute.
 
-    Conesearch campaign covers the time interval [burst_datetime, burst_datetime + total * period)
-    with `n=total` intervals each of duration `period`. The conesearch are scheduled with an offset
-    from the conesearch stopdate equal to `offset` to give some time for alerts to be ingested and
-    distributed by the broker.
-
+    The campaign covers ``[burst_datetime, burst_datetime + total * period)``
+    with ``total`` windows, each lasting ``period``. Jobs are scheduled after
+    each window by ``offset`` to allow broker ingestion and distribution. The
+    stable ``scheduled_at`` cutoff and initial ``run_after`` eligibility are
+    identical at creation; retries only move ``run_after``.
 
     Args:
-        cursor: a database cursor
-        event_id: the event id, it will be used by workers to query best localization at runtime
-        burst_datetime: the conesearch campaign startdate.
-        offset: the delay between stopdate and scheduled execution
-        period: the interval between conesearch stopdate and startdate
-        total: the number of conesearch to schedule
+        cursor: Database cursor.
+        event_id: Event primary key used by workers to query localization.
+        burst_datetime: Campaign start time.
+        offset: Delay between each window end and scheduled execution.
+        period: Duration of each conesearch window.
+        total: Number of conesearch jobs to schedule.
+
+    Raises:
+        ValueError: If time bounds or job counts are invalid.
     """
     if not is_tz_aware(burst_datetime):
         raise ValueError("burst_datetime must be timezone-aware")
@@ -213,9 +178,10 @@ def schedule_ztf_conesearch(
                 job_type,
                 subject_time_start,
                 subject_time_end,
-                scheduled_at
+                scheduled_at,
+                run_after
             )
-            VALUES (%s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (event_id, job_type, subject_time_start, subject_time_end)
             DO NOTHING
             """,
@@ -224,6 +190,7 @@ def schedule_ztf_conesearch(
                 ZTF_CONESEARCH_JOB_TYPE,
                 subject_time_start,
                 subject_time_end,
+                scheduled_at,
                 scheduled_at,
             ),
         )
@@ -234,8 +201,16 @@ def insert_message(
     filepath: Path,
     db_conn: Connection,
 ):
-    """Atomically records message and jobs to database."""
-    notice = PARSERS[message.topic()](message.value())
+    """Record a message, derived milestone, artifact, and jobs atomically.
+
+    Args:
+        message: Kafka message containing a supported GCN notice.
+        filepath: Path where the raw message was persisted.
+        db_conn: Database connection used for the transaction.
+    """
+    subtype = message.topic()
+    notice = PARSERS[subtype](message.value())
+    localization = notice_localization(subtype, notice)
     # TODO: mission name is hardcoded here, remember to change this once we add support for other missions
     mission, instrument = "Fermi", "GBM"
     event_external_id = f"{mission}.{instrument}:{notice.trig_id}"
@@ -262,15 +237,20 @@ def insert_message(
                 cursor,
                 event_id=event_info.event_id,
                 external_id=notice.ivorn,
-                subtype=message.topic(),
+                subtype=subtype,
                 published_at=notice.alert_datetime,
                 subject_time_start=notice.burst_datetime,
                 subject_time_end=notice.burst_datetime,
+                milestone_type="notice",
+                ra=localization.ra if localization is not None else None,
+                dec=localization.dec if localization is not None else None,
+                err_radius=localization.err_radius if localization is not None else None,
             )
             insert_artifact(
                 cursor,
                 milestone_id=milestone_id,
                 uri=artifact_uri,
+                artifact_type="gcn.voevent",
             )
 
         db_conn.commit()
