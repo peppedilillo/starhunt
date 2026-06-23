@@ -1,21 +1,10 @@
 services:
-  redis:
-    image: redis:7.4-alpine
-    container_name: starhunt-redis
-    restart: always
-    # sets disk persistence
-    command: redis-server --appendonly yes
-    ports:
-      - "${REDIS_PORT:?REDIS_PORT is required}:6379"
-    volumes:
-      - redis_data:/data
-
   postgres:
     image: postgres:16-bookworm
-    container_name: starhunt-postgres
-    env_file: ".env"
-    ports:
-      - "${POSTGRES_PORT:?POSTGRES_PORT is required}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./db:/docker-entrypoint-initdb.d:ro
@@ -24,6 +13,48 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  consumer:
+    build: .
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST is required}
+      POSTGRES_PORT: ${POSTGRES_PORT:?POSTGRES_PORT is required}
+      GCN_CLIENT_ID: ${GCN_CLIENT_ID:?GCN_CLIENT_ID is required}
+      GCN_CLIENT_SECRET: ${GCN_CLIENT_SECRET:?GCN_CLIENT_SECRET is required}
+    command:
+      - consume
+      - /data/artifacts
+      - --group-id
+      - "${GCN_GROUP_ID:?GCN_GROUP_ID is required}"
+      - --offset
+      - "${GCN_OFFSET:?GCN_OFFSET is required}"
+    volumes:
+      - ${STARHUNT_ARTIFACT_DIR:?STARHUNT_ARTIFACT_DIR is required}:/data/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build: .
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST is required}
+      POSTGRES_PORT: ${POSTGRES_PORT:?POSTGRES_PORT is required}
+    command:
+      - work
+      - /data/artifacts
+    volumes:
+      - ${STARHUNT_ARTIFACT_DIR:?STARHUNT_ARTIFACT_DIR is required}:/data/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
 
   postgres-test:
     image: postgres:16-bookworm
@@ -34,7 +65,7 @@ services:
       POSTGRES_USER: starhunt_test
       POSTGRES_PASSWORD: starhunt_test
     ports:
-      - "${POSTGRES_TEST_PORT:?POSTGRES_TEST_PORT is required}:5432"
+      - "55432:5432"
     tmpfs:
       - /var/lib/postgresql/data
     healthcheck:
@@ -43,16 +74,5 @@ services:
       timeout: 5s
       retries: 10
 
-  adminer:
-    image: adminer:latest
-    container_name: starhunt-adminer
-    env_file: ".env"
-    ports:
-      - "${ADMINER_HOST_PORT:?ADMINER_HOST_PORT is required}:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-
 volumes:
   postgres-data:
-  redis_data:

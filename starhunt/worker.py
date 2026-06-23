@@ -1,7 +1,6 @@
 """
-Worker process for executing scheduled background jobs.
+Worker process for executing scheduled background jobs. In a loop:
 
-Worker loop:
 - Poll for one due job in `pending` or retryable `failed` state.
 - Sleep briefly when no job is available.
 - Execute the claimed job in-process.
@@ -64,9 +63,8 @@ def execute_ztf_fink_conesearch(
     cursor,
     job: JobInfo,
     outdir: Path,
-    *,
+    timeout: float | None,
     query_fn=conesearch_fink_ztf,
-    query_timeout: float | None = DEFAULT_CONESEARCH_TIMEOUT,
 ) -> int | None:
     """Execute a ZTF Fink conesearch job.
 
@@ -74,8 +72,8 @@ def execute_ztf_fink_conesearch(
         cursor: Database cursor.
         job: Claimed conesearch job to execute.
         outdir: Directory where non-empty query responses should be written.
+        timeout: Maximum seconds to wait for the external query response.
         query_fn: Callable used to run the conesearch query.
-        query_timeout: Maximum seconds to wait for the external query response.
 
     Returns:
         Result artifact primary key for non-empty responses, else None.
@@ -96,7 +94,7 @@ def execute_ztf_fink_conesearch(
         startdate=job.subject_time_start,
         stopdate=job.subject_time_end,
         # prevents a stalled Fink response from holding a job and transaction indefinitely.
-        timeout=query_timeout,
+        timeout=timeout,
     )
     if len(result.json()) == 0:
         return None
@@ -127,10 +125,9 @@ def run_job(
     db_conn: Connection,
     job: JobInfo,
     outdir: Path,
-    *,
+    retry_delay: timedelta,
+    timeout: float | None,
     query_fn=conesearch_fink_ztf,
-    retry_delay: timedelta = DEFAULT_JOB_RETRY_DELAY,
-    query_timeout: float | None = DEFAULT_CONESEARCH_TIMEOUT,
 ):
     """Execute a claimed job and persist its lifecycle state.
 
@@ -154,9 +151,9 @@ def run_job(
         db_conn: Database connection used for job state transitions.
         job: Claimed job to execute.
         outdir: Directory where query responses should be written.
-        query_fn: Callable used to run the conesearch query.
         retry_delay: Delay before a failed job is eligible to run again.
-        query_timeout: Maximum seconds to wait for the external query response.
+        timeout: Maximum seconds to wait for the external query response.
+        query_fn: Callable used to run the conesearch query. Intended for testing.
     """
     try:
         if job.job_type == ZTF_CONESEARCH_JOB_TYPE:
@@ -165,8 +162,8 @@ def run_job(
                     cursor,
                     job=job,
                     outdir=outdir,
+                    timeout=timeout,
                     query_fn=query_fn,
-                    query_timeout=query_timeout,
                 )
                 mark_job_succeeded(cursor, job.job_id, result)
             db_conn.commit()
@@ -191,6 +188,9 @@ def run_worker(
     db_conn: Connection,
     outdir: Path,
     worker_id: str,
+    poll_interval: int | float,
+    retry_delay: timedelta,
+    timeout: float | None,
 ):
     """Continuously claim and execute scheduled jobs.
 
@@ -198,16 +198,25 @@ def run_worker(
         db_conn: Database connection used to claim and run jobs.
         outdir: Directory where query responses should be written.
         worker_id: Identifier assigned to claimed jobs.
+        poll_interval: Seconds to sleep when no job is available.
+        retry_delay: Delay before retryable jobs are eligible again.
+        timeout: Maximum seconds to wait for external query responses.
     """
     while True:
         with db_conn.cursor() as cursor:
-            claim_expired_jobs(cursor, retry_delay=DEFAULT_JOB_RETRY_DELAY)
+            claim_expired_jobs(cursor, retry_delay=retry_delay)
             job = pick_job(cursor, worker_id)
         db_conn.commit()
         if job is None:
-            sleep(POLL_INTERVAL)
+            sleep(poll_interval)
             continue
-        run_job(db_conn, job, outdir)
+        run_job(
+            db_conn=db_conn,
+            job=job,
+            outdir=outdir,
+            retry_delay=retry_delay,
+            timeout=timeout,
+        )
 
 
 def main(
@@ -226,6 +235,9 @@ def main(
         db_conn=db_conn,
         outdir=output_directory,
         worker_id=worker_id if worker_id is not None else str(uuid.uuid4()),
+        poll_interval=POLL_INTERVAL,
+        retry_delay=DEFAULT_JOB_RETRY_DELAY,
+        timeout=DEFAULT_CONESEARCH_TIMEOUT,
     )
 
 

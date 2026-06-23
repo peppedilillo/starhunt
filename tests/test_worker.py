@@ -9,13 +9,16 @@ from conftest import insert_fixture
 from conftest import localization_fixtures
 from conftest import parsed_notice
 
+from starhunt import worker
 from starhunt.consumer import ZTF_CONESEARCH_JOB_TYPE
 from starhunt.db import claim_expired_jobs
 from starhunt.db import get_or_create_event
 from starhunt.db import pick_job
-from starhunt.worker import DEFAULT_CONESEARCH_TIMEOUT
 from starhunt.worker import run_job
 from starhunt.worker import ZTF_FINK_CONESEARCH_ARTIFACT_TYPE
+
+TEST_RETRY_DELAY = timedelta(minutes=10)
+TEST_QUERY_TIMEOUT = 7
 
 
 def job_state(conn, job_id: int):
@@ -137,6 +140,42 @@ class FakeQueryResult:
 
     def json(self):
         return json.loads(self.content)
+
+
+def test_worker_main_passes_default_tuning(monkeypatch, tmp_path):
+    calls = []
+    db_conn = object()
+
+    monkeypatch.setattr(worker, "init_db_conn", lambda: db_conn)
+    monkeypatch.setattr(worker.uuid, "uuid4", lambda: "generated-worker-id")
+
+    def fake_run_worker(*, db_conn, outdir, worker_id, poll_interval, retry_delay, timeout):
+        calls.append(
+            {
+                "db_conn": db_conn,
+                "outdir": outdir,
+                "worker_id": worker_id,
+                "poll_interval": poll_interval,
+                "retry_delay": retry_delay,
+                "timeout": timeout,
+            }
+        )
+
+    monkeypatch.setattr(worker, "run_worker", fake_run_worker)
+
+    worker.main(output_directory=tmp_path, worker_id=None)
+
+    assert calls == [
+        {
+            "db_conn": db_conn,
+            "outdir": tmp_path,
+            "worker_id": "generated-worker-id",
+            "poll_interval": worker.POLL_INTERVAL,
+            "retry_delay": worker.DEFAULT_JOB_RETRY_DELAY,
+            "timeout": worker.DEFAULT_CONESEARCH_TIMEOUT,
+        }
+    ]
+    assert tmp_path.is_dir()
 
 
 def test_claim_expired_jobs_requeues_retryable_running_job(db_conn):
@@ -279,7 +318,14 @@ def test_run_job_executes_conesearch_and_persists_result(db_conn, tmp_path):
         )
         return FakeQueryResult(b'[{"i:objectId":"ZTF-test"}]')
 
-    run_job(db_conn, job, tmp_path, query_fn=fake_query_fn)
+    run_job(
+        db_conn,
+        job,
+        tmp_path,
+        query_fn=fake_query_fn,
+        retry_delay=TEST_RETRY_DELAY,
+        timeout=TEST_QUERY_TIMEOUT,
+    )
 
     assert calls == {
         "ra": notice.ra,
@@ -287,7 +333,7 @@ def test_run_job_executes_conesearch_and_persists_result(db_conn, tmp_path):
         "radius": notice.error_radius * 3600,
         "startdate": job.subject_time_start,
         "stopdate": job.subject_time_end,
-        "timeout": DEFAULT_CONESEARCH_TIMEOUT,
+        "timeout": TEST_QUERY_TIMEOUT,
     }
 
     status, scheduled_at, run_after, result_artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
@@ -320,7 +366,13 @@ def test_run_job_missing_localization_marks_job_failed(db_conn, tmp_path):
         job = pick_job(cur, "worker-missing-localization")
     db_conn.commit()
 
-    run_job(db_conn, job, tmp_path)
+    run_job(
+        db_conn,
+        job,
+        tmp_path,
+        retry_delay=TEST_RETRY_DELAY,
+        timeout=TEST_QUERY_TIMEOUT,
+    )
 
     status, scheduled_at, run_after, result_artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
     assert status == "failed"
@@ -339,7 +391,14 @@ def test_run_job_empty_result_marks_success_without_persistence(db_conn, tmp_pat
         job = pick_job(cur, "worker-empty-result")
     db_conn.commit()
 
-    run_job(db_conn, job, tmp_path, query_fn=lambda **kwargs: FakeQueryResult(b"[]"))
+    run_job(
+        db_conn,
+        job,
+        tmp_path,
+        query_fn=lambda **kwargs: FakeQueryResult(b"[]"),
+        retry_delay=TEST_RETRY_DELAY,
+        timeout=TEST_QUERY_TIMEOUT,
+    )
 
     status, scheduled_at, run_after, result_artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
     assert status == "succeeded"
@@ -365,7 +424,14 @@ def test_run_job_query_failure_can_dead_letter(db_conn, tmp_path):
     def failing_query_fn(**kwargs):
         raise RuntimeError("boom")
 
-    run_job(db_conn, job, tmp_path, query_fn=failing_query_fn)
+    run_job(
+        db_conn,
+        job,
+        tmp_path,
+        query_fn=failing_query_fn,
+        retry_delay=TEST_RETRY_DELAY,
+        timeout=TEST_QUERY_TIMEOUT,
+    )
 
     status, _, _, result_artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
     assert status == "dead"
@@ -409,7 +475,13 @@ def test_run_job_dead_letters_unsupported_job_type(db_conn, tmp_path):
         job = pick_job(cur, "worker-unsupported")
     db_conn.commit()
 
-    run_job(db_conn, job, tmp_path)
+    run_job(
+        db_conn,
+        job,
+        tmp_path,
+        retry_delay=TEST_RETRY_DELAY,
+        timeout=TEST_QUERY_TIMEOUT,
+    )
 
     status, _, _, result_artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
     assert status == "dead"

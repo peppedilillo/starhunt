@@ -3,11 +3,7 @@ from typing import Literal
 
 import click
 
-from starhunt.consumer import init_consumer
-from starhunt.consumer import insert_message
-from starhunt.consumer import TOPICS
-from starhunt.consumer import write_message
-from starhunt.db import init_db_conn
+from starhunt.consumer import main as run_consumer_main
 
 
 @click.command()
@@ -33,22 +29,8 @@ def main(
     offset: Literal["earliest", "latest"] = "earliest",
 ):
     """Consume GCN notices and store them in OUTPUT_DIRECTORY."""
-    output_directory.mkdir(parents=True, exist_ok=True)
-    consumer = init_consumer(offset, group_id)
-    db_conn = init_db_conn()
-    try:
-        consumer.subscribe([t.topic for t in TOPICS])
-        while True:
-            for message in consumer.consume(timeout=1):
-                if message.error():
-                    click.echo(message.error(), err=True)
-                    continue
-
-                click.echo(f"Received message {message.offset()} over topic {message.topic()}")
-                filepath = write_message(message=message, outdir=output_directory)
-                click.echo(f"  Wrote message to {filepath}.")
-                insert_message(message=message, filepath=filepath, db_conn=db_conn)
-                consumer.commit(message=message, asynchronous=False)
-                click.echo(f"  Message committed.")
-    finally:
-        consumer.close()
+    run_consumer_main(
+        output_directory=output_directory,
+        group_id=group_id,
+        offset=offset,
+    )

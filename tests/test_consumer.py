@@ -9,6 +9,7 @@ from conftest import insert_fixture
 from conftest import parsed_notice
 import pytest
 
+from starhunt import consumer
 from starhunt.consumer import DEFAULT_CONESEARCH_TOTAL
 from starhunt.consumer import schedule_ztf_conesearch
 from starhunt.consumer import ZTF_CONESEARCH_JOB_TYPE
@@ -64,12 +65,68 @@ def milestone_row_by_external_id(conn, external_id: str):
         return cur.fetchone()
 
 
+class StopConsumer(Exception):
+    pass
+
+
+class FakeConsumer:
+    def __init__(self):
+        self.closed = False
+        self.consume_calls = 0
+        self.subscribed_topics = None
+
+    def subscribe(self, topics):
+        self.subscribed_topics = topics
+
+    def consume(self, *, timeout):
+        self.consume_calls += 1
+        if self.consume_calls > 1:
+            raise StopConsumer
+        return []
+
+    def close(self):
+        self.closed = True
+
+
 def fixture_pair_from_same_event():
     for paths in event_fixture_groups().values():
         if len(paths) >= 2:
             return paths[:2]
 
     raise AssertionError("Expected at least one fixture pair from the same event.")
+
+
+def test_consumer_main_initializes_and_closes_consumer(monkeypatch, tmp_path):
+    fake_consumer = FakeConsumer()
+    calls = {}
+
+    def fake_init_consumer(offset, group_id):
+        calls["offset"] = offset
+        calls["group_id"] = group_id
+        return fake_consumer
+
+    def fake_init_db_conn():
+        calls["db_initialized"] = True
+        return object()
+
+    monkeypatch.setattr(consumer, "init_consumer", fake_init_consumer)
+    monkeypatch.setattr(consumer, "init_db_conn", fake_init_db_conn)
+
+    with pytest.raises(StopConsumer):
+        consumer.main(
+            output_directory=tmp_path,
+            group_id="group-1",
+            offset="latest",
+        )
+
+    assert calls == {
+        "offset": "latest",
+        "group_id": "group-1",
+        "db_initialized": True,
+    }
+    assert fake_consumer.subscribed_topics == [topic.topic for topic in consumer.TOPICS]
+    assert fake_consumer.closed is True
+    assert tmp_path.is_dir()
 
 
 def test_schedule_ztf_conesearch_creates_time_window_jobs(db_conn):

@@ -1,3 +1,10 @@
+"""GCN Kafka consumer for persisting notices and scheduling follow-up jobs:
+
+- Poll selected topics from Kafka GCN stream and stores notices to disk.
+- Writes new events and follow-up to database.
+- Schedules alert cone search over event regions.
+"""
+
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
@@ -14,6 +21,7 @@ from gcn_parser.fermi import parse_fermi_gbm_flt_pos
 from gcn_parser.fermi import parse_fermi_gbm_gnd_pos
 from psycopg import Connection
 
+from .db import init_db_conn
 from .db import get_or_create_event
 from .db import get_or_create_milestone
 from .db import insert_artifact
@@ -265,3 +273,32 @@ def insert_message(
     except Exception:
         db_conn.rollback()
         raise
+
+
+def main(
+    output_directory: Path,
+    group_id: str | None = None,
+    offset: Literal["earliest", "latest"] = "earliest",
+):
+    """Consume GCN notices and store raw messages plus derived records.
+
+    Args:
+        output_directory: Directory where raw Kafka messages should be written.
+        group_id: Optional Kafka consumer group ID.
+        offset: Initial offset policy when no committed offset exists.
+    """
+    output_directory.mkdir(parents=True, exist_ok=True)
+    consumer = init_consumer(offset, group_id)
+    db_conn = init_db_conn()
+    try:
+        consumer.subscribe([t.topic for t in TOPICS])
+        while True:
+            for message in consumer.consume(timeout=1):
+                if message.error():
+                    continue
+
+                filepath = write_message(message=message, outdir=output_directory)
+                insert_message(message=message, filepath=filepath, db_conn=db_conn)
+                consumer.commit(message=message, asynchronous=False)
+    finally:
+        consumer.close()
