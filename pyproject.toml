@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "click>=8.4.1",
+    "confluent-kafka>=2.14.2",
     "gcn-kafka>=0.3.4",
     "gcn-notice-parser>=0.1.1",
     "psycopg[binary]>=3.3.4",
@@ -24,6 +25,7 @@ dev = [
 
 [project.scripts]
 consume = 'scripts.consume:main'
+work = 'scripts.work:main'
 
 [tool.pytest.ini_options]
 markers = [

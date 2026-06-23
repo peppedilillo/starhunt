@@ -236,9 +236,10 @@ def test_pick_job_uses_run_after_for_worker_eligibility(db_conn):
                 subject_time_start,
                 subject_time_end,
                 scheduled_at,
-                run_after
+                run_after,
+                max_attempts
             )
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 event.event_id,
@@ -247,6 +248,7 @@ def test_pick_job_uses_run_after_for_worker_eligibility(db_conn):
                 now - timedelta(hours=1),
                 now - timedelta(minutes=1),
                 now + timedelta(minutes=10),
+                2,
             ),
         )
         job = pick_job(cur, "worker-too-early")
@@ -389,9 +391,10 @@ def test_run_job_dead_letters_unsupported_job_type(db_conn, tmp_path):
                 subject_time_start,
                 subject_time_end,
                 scheduled_at,
-                run_after
+                run_after,
+                max_attempts
             )
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 event.event_id,
@@ -400,6 +403,7 @@ def test_run_job_dead_letters_unsupported_job_type(db_conn, tmp_path):
                 now - timedelta(hours=1),
                 now - timedelta(minutes=1),
                 now - timedelta(minutes=1),
+                2,
             ),
         )
         job = pick_job(cur, "worker-unsupported")

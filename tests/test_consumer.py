@@ -91,6 +91,7 @@ def test_schedule_ztf_conesearch_creates_time_window_jobs(db_conn):
             offset=offset,
             period=period,
             total=3,
+            max_retry=4,
         )
 
     rows = job_rows(db_conn)
@@ -107,7 +108,7 @@ def test_schedule_ztf_conesearch_creates_time_window_jobs(db_conn):
             expected_end + offset,
             "pending",
             0,
-            2,
+            4,
             {},
         )
 
@@ -130,18 +131,20 @@ def test_schedule_ztf_conesearch_is_idempotent(db_conn):
                 offset=timedelta(hours=2),
                 period=timedelta(hours=6),
                 total=3,
+                max_retry=4,
             )
 
     assert len(job_rows(db_conn)) == 3
 
 
 @pytest.mark.parametrize(
-    ("burst_datetime", "offset", "period", "total", "message"),
+    ("burst_datetime", "offset", "period", "total", "max_retry", "message"),
     [
         (
             datetime(2026, 1, 1),
             timedelta(hours=1),
             timedelta(hours=1),
+            1,
             1,
             "timezone-aware",
         ),
@@ -150,12 +153,14 @@ def test_schedule_ztf_conesearch_is_idempotent(db_conn):
             timedelta(hours=1),
             timedelta(0),
             1,
+            1,
             "period",
         ),
         (
             datetime(2026, 1, 1, tzinfo=timezone.utc),
             -timedelta(seconds=1),
             timedelta(hours=1),
+            1,
             1,
             "offset",
         ),
@@ -164,7 +169,16 @@ def test_schedule_ztf_conesearch_is_idempotent(db_conn):
             timedelta(hours=1),
             timedelta(hours=1),
             0,
+            1,
             "total",
+        ),
+        (
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timedelta(hours=1),
+            timedelta(hours=1),
+            1,
+            0,
+            "max_retry",
         ),
     ],
 )
@@ -174,6 +188,7 @@ def test_schedule_ztf_conesearch_rejects_invalid_inputs(
     offset,
     period,
     total,
+    max_retry,
     message,
 ):
     with db_conn.cursor() as cur:
@@ -191,6 +206,7 @@ def test_schedule_ztf_conesearch_rejects_invalid_inputs(
                 offset=offset,
                 period=period,
                 total=total,
+                max_retry=max_retry,
             )
 
 

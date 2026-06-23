@@ -53,7 +53,7 @@ CREATE TABLE jobs (
     run_after timestamptz NOT NULL,  -- mutable, and intended to be edited with retries
     status text NOT NULL DEFAULT 'pending',
     attempt_count integer NOT NULL DEFAULT 0,
-    max_attempts integer NOT NULL DEFAULT 2,
+    max_attempts integer NOT NULL,
     worker_id text,
     lease_until timestamptz,
     started_at timestamptz,

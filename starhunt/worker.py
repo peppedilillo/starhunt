@@ -30,6 +30,7 @@ from .db import mark_job_succeeded
 from .db import pick_job
 from .queries import conesearch_fink_ztf
 
+POLL_INTERVAL = 5
 DEFAULT_JOB_RETRY_DELAY = timedelta(hours=12)
 DEFAULT_CONESEARCH_TIMEOUT = 60
 
@@ -94,7 +95,7 @@ def execute_ztf_fink_conesearch(
         radius=localization.err_radius * 3600,
         startdate=job.subject_time_start,
         stopdate=job.subject_time_end,
-        # timeout prevents a stalled Fink response from holding the job and transaction indefinitely.
+        # prevents a stalled Fink response from holding a job and transaction indefinitely.
         timeout=query_timeout,
     )
     if len(result.json()) == 0:
@@ -184,9 +185,6 @@ def run_job(
                 retry_delay=retry_delay,
             )
         db_conn.commit()
-
-
-POLL_INTERVAL = 5
 
 
 def run_worker(

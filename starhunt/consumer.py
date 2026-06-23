@@ -23,6 +23,7 @@ from .utils import is_tz_aware
 DEFAULT_CONESEARCH_OFFSET = timedelta(hours=12)
 DEFAULT_CONESEARCH_PERIOD = timedelta(hours=6)
 DEFAULT_CONESEARCH_TOTAL = 24
+DEFAULT_CONESEARCH_MAXRETRY = 3
 
 
 @dataclass
@@ -138,6 +139,7 @@ def schedule_ztf_conesearch(
     offset: timedelta,
     period: timedelta,
     total: int,
+    max_retry: int,
 ):
     """Schedule ZTF conesearch jobs for workers to execute.
 
@@ -154,6 +156,7 @@ def schedule_ztf_conesearch(
         offset: Delay between each window end and scheduled execution.
         period: Duration of each conesearch window.
         total: Number of conesearch jobs to schedule.
+        max_retry: Number of maximum query attempts.
 
     Raises:
         ValueError: If time bounds or job counts are invalid.
@@ -166,6 +169,8 @@ def schedule_ztf_conesearch(
         raise ValueError("offset must be non-negative")
     if total <= 0:
         raise ValueError("total must be positive")
+    if max_retry <= 0:
+        raise ValueError("max_retry must be positive")
 
     for index in range(total):
         subject_time_start = burst_datetime + index * period
@@ -179,9 +184,10 @@ def schedule_ztf_conesearch(
                 subject_time_start,
                 subject_time_end,
                 scheduled_at,
-                run_after
+                run_after,
+                max_attempts
             )
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (event_id, job_type, subject_time_start, subject_time_end)
             DO NOTHING
             """,
@@ -192,6 +198,7 @@ def schedule_ztf_conesearch(
                 subject_time_end,
                 scheduled_at,
                 scheduled_at,
+                max_retry,
             ),
         )
 
@@ -232,6 +239,7 @@ def insert_message(
                     offset=DEFAULT_CONESEARCH_OFFSET,
                     period=DEFAULT_CONESEARCH_PERIOD,
                     total=DEFAULT_CONESEARCH_TOTAL,
+                    max_retry=DEFAULT_CONESEARCH_MAXRETRY,
                 )
             milestone_id = get_or_create_milestone(
                 cursor,
