@@ -1,13 +1,4 @@
 from datetime import datetime
-import os
-
-from .exceptions import MissingEnvironmentVariable
-
-
-def required_env(name: str) -> str:
-    if (value := os.environ.get(name)) is None:
-        raise MissingEnvironmentVariable(name)
-    return value
 
 
 def is_tz_aware(dt: datetime) -> bool:
