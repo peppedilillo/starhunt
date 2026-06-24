@@ -4,6 +4,7 @@ from typing import Literal
 import click
 
 from starhunt.consumer import main as run_consumer_main
+from starhunt.logging import configure_logging
 
 
 @click.command()
@@ -29,6 +30,7 @@ def main(
     offset: Literal["earliest", "latest"] = "earliest",
 ):
     """Consume GCN notices and store them in OUTPUT_DIRECTORY."""
+    configure_logging("consumer")
     run_consumer_main(
         output_directory=output_directory,
         group_id=group_id,

@@ -10,6 +10,7 @@ Worker process for executing scheduled background jobs. In a loop:
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+import logging
 from pathlib import Path
 from time import sleep
 import uuid
@@ -35,6 +36,7 @@ DEFAULT_CONESEARCH_TIMEOUT = 60
 
 
 ZTF_FINK_CONESEARCH_ARTIFACT_TYPE = "ztf.fink.conesearch.json"
+logger = logging.getLogger(__name__)
 
 
 class MissingLocalization(Exception):
@@ -155,6 +157,14 @@ def run_job(
         timeout: Maximum seconds to wait for the external query response.
         query_fn: Callable used to run the conesearch query. Intended for testing.
     """
+    log_context = {
+        "job_id": job.job_id,
+        "event_id": job.event_id,
+        "job_type": job.job_type,
+        "attempt_count": job.attempt_count,
+        "max_attempts": job.max_attempts,
+    }
+    logger.info("Job started", extra=log_context)
     try:
         if job.job_type == ZTF_CONESEARCH_JOB_TYPE:
             with db_conn.cursor() as cursor:
@@ -167,10 +177,18 @@ def run_job(
                 )
                 mark_job_succeeded(cursor, job.job_id, result)
             db_conn.commit()
+            logger.info(
+                "Job succeeded",
+                extra=log_context | {"status": "succeeded", "artifact_id": result},
+            )
         else:
             with db_conn.cursor() as cursor:
                 mark_job_dead(cursor, job.job_id, f"Unsupported job type: {job.job_type}")
             db_conn.commit()
+            logger.error(
+                "Unsupported job type",
+                extra=log_context | {"status": "dead"},
+            )
     except Exception as exc:
         # clear any aborted transaction before recording the job failure.
         db_conn.rollback()
@@ -182,6 +200,13 @@ def run_job(
                 retry_delay=retry_delay,
             )
         db_conn.commit()
+        exhausted = job.attempt_count >= job.max_attempts
+        log = logger.error if exhausted else logger.warning
+        log(
+            "Job failed",
+            extra=log_context | {"status": "dead" if exhausted else "failed"},
+            exc_info=True,
+        )
 
 
 def run_worker(
@@ -204,9 +229,17 @@ def run_worker(
     """
     while True:
         with db_conn.cursor() as cursor:
-            claim_expired_jobs(cursor, retry_delay=retry_delay)
+            reclaimed = claim_expired_jobs(cursor, retry_delay=retry_delay)
             job = pick_job(cursor, worker_id)
         db_conn.commit()
+        if reclaimed:
+            logger.warning(
+                "Expired worker leases recovered",
+                extra={
+                    "worker_id": worker_id,
+                    "recovered_jobs": reclaimed,
+                },
+            )
         if job is None:
             sleep(poll_interval)
             continue

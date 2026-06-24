@@ -8,6 +8,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
+import logging
 import os
 from pathlib import Path
 from typing import Callable, Literal
@@ -59,6 +60,7 @@ TOPICS = [
 SUFFIXES = {t.topic: t.suffix for t in TOPICS}
 PARSERS = {t.topic: t.parser for t in TOPICS}
 ZTF_CONESEARCH_JOB_TYPE = "ztf_fink_conesearch"
+logger = logging.getLogger(__name__)
 
 
 def init_consumer(
@@ -295,10 +297,28 @@ def main(
         while True:
             for message in consumer.consume(timeout=1):
                 if message.error():
+                    logger.warning(
+                        "Kafka message error",
+                        extra={
+                            "topic": message.topic(),
+                            "partition": message.partition(),
+                            "offset": message.offset(),
+                            "error": message.error(),
+                        },
+                    )
                     continue
 
                 filepath = write_message(message=message, outdir=output_directory)
                 insert_message(message=message, filepath=filepath, db_conn=db_conn)
                 consumer.commit(message=message, asynchronous=False)
+                logger.info(
+                    "Kafka message committed",
+                    extra={
+                        "topic": message.topic(),
+                        "partition": message.partition(),
+                        "offset": message.offset(),
+                        "artifact_path": filepath,
+                    },
+                )
     finally:
         consumer.close()

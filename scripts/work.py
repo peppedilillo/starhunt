@@ -2,6 +2,7 @@ from pathlib import Path
 
 import click
 
+from starhunt.logging import configure_logging
 from starhunt.worker import main as run_worker_main
 
 
@@ -20,4 +21,5 @@ def main(
     worker_id: str | None = None,
 ):
     """Execute scheduled Starhunt jobs and store outputs in OUTPUT_DIRECTORY."""
+    configure_logging("worker")
     run_worker_main(output_directory=output_directory, worker_id=worker_id)
