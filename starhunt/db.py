@@ -381,13 +381,13 @@ def find_best_localization(cursor, event_id: int, cutoff_at: datetime) -> Locali
     return Localization(*row)
 
 
-def mark_job_succeeded(cursor, job_id: int, result_artifact_id: int | None):
+def mark_job_succeeded(cursor, job_id: int, artifact_id: int | None):
     """Mark a job as succeeded.
 
     Args:
         cursor: Database cursor.
         job_id: Job primary key.
-        result_artifact_id: Optional artifact primary key produced by the job.
+        artifact_id: Optional artifact primary key produced by the job.
     """
     cursor.execute(
         """
@@ -395,11 +395,11 @@ def mark_job_succeeded(cursor, job_id: int, result_artifact_id: int | None):
         SET status = 'succeeded',
             completed_at = now(),
             lease_until = NULL,
-            result_artifact_id = %s,
+            artifact_id = %s,
             last_error = NULL
         WHERE id = %s
         """,
-        (result_artifact_id, job_id),
+        (artifact_id, job_id),
     )
 
 

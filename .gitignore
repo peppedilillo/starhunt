@@ -22,3 +22,6 @@ AGENTS.md
 # Secrets
 .secrets
 .env
+
+# data
+artifacts

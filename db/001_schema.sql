@@ -46,6 +46,7 @@ ON artifacts (milestone_id);
 CREATE TABLE jobs (
     id bigserial PRIMARY KEY,
     event_id bigint NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    artifact_id bigint REFERENCES artifacts(id) ON DELETE SET NULL,
     job_type text NOT NULL,
     subject_time_start timestamptz NOT NULL,
     subject_time_end timestamptz NOT NULL,
@@ -59,7 +60,6 @@ CREATE TABLE jobs (
     started_at timestamptz,
     completed_at timestamptz,
     payload jsonb NOT NULL DEFAULT '{}'::jsonb,
-    result_artifact_id bigint REFERENCES artifacts(id) ON DELETE SET NULL,
     last_error text,
     created_at timestamptz NOT NULL DEFAULT now(),
 

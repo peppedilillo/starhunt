@@ -29,7 +29,7 @@ def job_state(conn, job_id: int):
                 status,
                 scheduled_at,
                 run_after,
-                result_artifact_id,
+                artifact_id,
                 last_error,
                 completed_at
             FROM jobs
@@ -336,11 +336,11 @@ def test_run_job_executes_conesearch_and_persists_result(db_conn, tmp_path):
         "timeout": TEST_QUERY_TIMEOUT,
     }
 
-    status, scheduled_at, run_after, result_artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
+    status, scheduled_at, run_after, artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
     assert status == "succeeded"
     assert scheduled_at == job.scheduled_at
     assert run_after == job.run_after
-    assert result_artifact_id is not None
+    assert artifact_id is not None
     assert last_error is None
     assert completed_at is not None
 
@@ -352,7 +352,7 @@ def test_run_job_executes_conesearch_and_persists_result(db_conn, tmp_path):
         notice.dec,
         notice.error_radius,
     )
-    assert result_row[5] == result_artifact_id
+    assert result_row[5] == artifact_id
     assert result_row[6] == ZTF_FINK_CONESEARCH_ARTIFACT_TYPE
     result_path = Path(result_row[7].removeprefix("file://"))
     assert result_path.read_bytes() == b'[{"i:objectId":"ZTF-test"}]'
@@ -374,11 +374,11 @@ def test_run_job_missing_localization_marks_job_failed(db_conn, tmp_path):
         timeout=TEST_QUERY_TIMEOUT,
     )
 
-    status, scheduled_at, run_after, result_artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
+    status, scheduled_at, run_after, artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
     assert status == "failed"
     assert scheduled_at == job.scheduled_at
     assert run_after > job.run_after
-    assert result_artifact_id is None
+    assert artifact_id is None
     assert "No usable localization" in last_error
     assert completed_at is None
 
@@ -400,11 +400,11 @@ def test_run_job_empty_result_marks_success_without_persistence(db_conn, tmp_pat
         timeout=TEST_QUERY_TIMEOUT,
     )
 
-    status, scheduled_at, run_after, result_artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
+    status, scheduled_at, run_after, artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
     assert status == "succeeded"
     assert scheduled_at == job.scheduled_at
     assert run_after == job.run_after
-    assert result_artifact_id is None
+    assert artifact_id is None
     assert last_error is None
     assert completed_at is not None
     assert conesearch_result_row(db_conn, job.job_id) is None
@@ -433,9 +433,9 @@ def test_run_job_query_failure_can_dead_letter(db_conn, tmp_path):
         timeout=TEST_QUERY_TIMEOUT,
     )
 
-    status, _, _, result_artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
+    status, _, _, artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
     assert status == "dead"
-    assert result_artifact_id is None
+    assert artifact_id is None
     assert last_error == "boom"
     assert completed_at is not None
 
@@ -483,8 +483,8 @@ def test_run_job_dead_letters_unsupported_job_type(db_conn, tmp_path):
         timeout=TEST_QUERY_TIMEOUT,
     )
 
-    status, _, _, result_artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
+    status, _, _, artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
     assert status == "dead"
-    assert result_artifact_id is None
+    assert artifact_id is None
     assert last_error == "Unsupported job type: unsupported_job_type"
     assert completed_at is not None
