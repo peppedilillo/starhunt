@@ -1,4 +1,4 @@
-"""Logging utilities for Starhunt."""
+"""Logging utilities."""
 
 from collections.abc import Mapping
 from datetime import datetime
@@ -123,7 +123,7 @@ def configure_logging(service: str) -> None:
 
     handler = logging.StreamHandler()
     handler.setFormatter(JsonFormatter())
-    # this ensure idempotency but will result in losing existing handlers
+    # this ensures idempotency but will result in losing existing handlers
     # since this codebase is client code already, we deem this acceptable
     logger.handlers.clear()
     logger.addHandler(handler)

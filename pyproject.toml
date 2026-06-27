@@ -21,11 +21,13 @@ dev = [
     "black>=26.5.1",
     "isort>=8.0.1",
     "pytest>=9.1.0",
+    "rich>=15.0.0",
 ]
 
 [project.scripts]
 consume = 'scripts.consume:main'
 work = 'scripts.work:main'
+pretty = 'scripts.pretty:main'
 
 [tool.pytest.ini_options]
 markers = [

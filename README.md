@@ -1,6 +1,6 @@
 # Starhunt
 
-Tools for consuming GCN notice and to monitor alerts from wide-field telescopes in real-time.
+Tools for searching optical counterparts to high-energy astrophysical transients.
 
 ## Run
 
@@ -11,6 +11,7 @@ mkdir -p artifacts
 docker compose --env-file .env build postgres consumer worker
 docker compose --env-file .env up -d postgres consumer worker
 docker compose --env-file .env ps
+docker compose --env-file .env logs consumer worker | uv run pretty
 ```
 
 ## Tests
