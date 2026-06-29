@@ -110,11 +110,11 @@ def get_or_create_event(cursor, external_id: str) -> EventInfo:
     return EventInfo(event_id=cursor.fetchone()[0], is_new=False)
 
 
-def insert_notice(
+def _insert_notice(
     cursor,
     *,
     event_id: int,
-    ivorn: str,
+    notice_format: str,
     topic: str,
     kafka_partition: int,
     kafka_offset: int,
@@ -128,33 +128,12 @@ def insert_notice(
     dec: float | None = None,
     err_radius: float | None = None,
 ) -> int:
-    """Return a notice id, inserting the notice if needed.
-
-    Args:
-        cursor: Database cursor.
-        event_id: Event primary key.
-        ivorn: Stable notice identifier.
-        topic: Kafka topic carrying the notice.
-        kafka_partition: Kafka partition that carried the notice.
-        kafka_offset: Kafka offset that carried the notice.
-        mission: Mission that produced the notice.
-        instrument: Instrument that produced the notice.
-        is_retraction: Whether the notice invalidates earlier cited notices.
-        published_at: Time when the notice was published.
-        burst_datetime: Event burst time reported by the notice.
-        raw_uri: URI of the raw notice file.
-        ra: Optional right ascension in degrees.
-        dec: Optional declination in degrees.
-        err_radius: Optional error radius in degrees.
-
-    Returns:
-        Notice primary key.
-    """
+    """Return a common notice id, inserting the notice envelope if needed."""
     cursor.execute(
         """
         INSERT INTO notices (
             event_id,
-            ivorn,
+            format,
             topic,
             kafka_partition,
             kafka_offset,
@@ -174,7 +153,7 @@ def insert_notice(
         """,
         (
             event_id,
-            ivorn,
+            notice_format,
             topic,
             kafka_partition,
             kafka_offset,
@@ -204,6 +183,90 @@ def insert_notice(
         (topic, kafka_partition, kafka_offset),
     )
     return cursor.fetchone()[0]
+
+
+def insert_notice_voevent(
+    cursor,
+    *,
+    event_id: int,
+    ivorn: str,
+    topic: str,
+    kafka_partition: int,
+    kafka_offset: int,
+    mission: str,
+    instrument: str,
+    is_retraction: bool,
+    published_at: datetime,
+    burst_datetime: datetime,
+    raw_uri: str,
+    ra: float | None = None,
+    dec: float | None = None,
+    err_radius: float | None = None,
+) -> int:
+    """Return a VOEvent notice id, inserting the notice if needed."""
+    notice_id = _insert_notice(
+        cursor,
+        event_id=event_id,
+        notice_format="voevent",
+        topic=topic,
+        kafka_partition=kafka_partition,
+        kafka_offset=kafka_offset,
+        mission=mission,
+        instrument=instrument,
+        is_retraction=is_retraction,
+        published_at=published_at,
+        burst_datetime=burst_datetime,
+        raw_uri=raw_uri,
+        ra=ra,
+        dec=dec,
+        err_radius=err_radius,
+    )
+    cursor.execute(
+        """
+        INSERT INTO notice_voevents (notice_id, ivorn)
+        VALUES (%s, %s)
+        ON CONFLICT (notice_id) DO NOTHING
+        """,
+        (notice_id, ivorn),
+    )
+    return notice_id
+
+
+def insert_notice_json(
+    cursor,
+    *,
+    event_id: int,
+    topic: str,
+    kafka_partition: int,
+    kafka_offset: int,
+    mission: str,
+    instrument: str,
+    is_retraction: bool,
+    published_at: datetime,
+    burst_datetime: datetime,
+    raw_uri: str,
+    ra: float | None = None,
+    dec: float | None = None,
+    err_radius: float | None = None,
+) -> int:
+    """Return a JSON notice id, inserting the notice if needed."""
+    return _insert_notice(
+        cursor,
+        event_id=event_id,
+        notice_format="json",
+        topic=topic,
+        kafka_partition=kafka_partition,
+        kafka_offset=kafka_offset,
+        mission=mission,
+        instrument=instrument,
+        is_retraction=is_retraction,
+        published_at=published_at,
+        burst_datetime=burst_datetime,
+        raw_uri=raw_uri,
+        ra=ra,
+        dec=dec,
+        err_radius=err_radius,
+    )
 
 
 def mark_retracted_notices(
@@ -236,8 +299,10 @@ def mark_retracted_notices(
         """
         UPDATE notices
         SET retracted_by = %s
+        FROM notice_voevents
         WHERE event_id = %s
-            AND ivorn = ANY(%s)
+            AND notice_voevents.notice_id = notices.id
+            AND notice_voevents.ivorn = ANY(%s)
             -- retraction-of-retraction is unsupported until examples require it.
             AND NOT is_retraction
         RETURNING id

@@ -1,10 +1,18 @@
 from conftest import fixture_paths
 from conftest import fixture_topic
 from conftest import normalized_notice
+from conftest import parsed_notice
+
+from starhunt.consumer import NoticeVOEvent
 
 
 def notices_by_ivorn():
-    return {normalized_notice(path).ivorn: path for path in fixture_paths()}
+    notices = {}
+    for path in fixture_paths():
+        notice = normalized_notice(path)
+        if isinstance(notice, NoticeVOEvent):
+            notices[notice.ivorn] = path
+    return notices
 
 
 def retraction_paths():
@@ -40,3 +48,22 @@ def test_retraction_targets_share_svom_burst_id():
         retraction = normalized_notice(retraction_path)
         for target_ivorn in retraction.retractions:
             assert target_ivorn.rsplit("#", maxsplit=1)[1].startswith(f"{retraction.burst_id}_")
+
+
+def test_einstein_probe_wxt_notices_have_one_id():
+    for path in fixture_paths():
+        if fixture_topic(path) == "gcn.notices.einstein_probe.wxt.alert":
+            parsed = parsed_notice(path)
+            assert len(parsed.id) == 1
+            assert normalized_notice(path).burst_id == parsed.id[0]
+
+
+def test_einstein_probe_wxt_ids_are_unique():
+    burst_ids = [
+        normalized_notice(path).burst_id
+        for path in fixture_paths()
+        if fixture_topic(path) == "gcn.notices.einstein_probe.wxt.alert"
+    ]
+
+    assert len(burst_ids) == 29
+    assert len(burst_ids) == len(set(burst_ids))

@@ -9,7 +9,7 @@ CREATE TABLE events (
 CREATE TABLE notices (
     id bigserial PRIMARY KEY,
     event_id bigint NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-    ivorn text NOT NULL UNIQUE,
+    format text NOT NULL,
     topic text NOT NULL,
     -- Kafka record identity used for ingestion idempotency.
     kafka_partition integer NOT NULL,
@@ -37,7 +37,13 @@ CREATE TABLE notices (
     CHECK (retracted_by IS NULL OR retracted_by <> id),
     -- retraction notices cannot be retracted until real examples require it.
     CHECK (NOT is_retraction OR retracted_by IS NULL),
+    CHECK (format IN ('voevent', 'json')),
     UNIQUE (topic, kafka_partition, kafka_offset)
+);
+
+CREATE TABLE notice_voevents (
+    notice_id bigint PRIMARY KEY REFERENCES notices(id) ON DELETE CASCADE,
+    ivorn text NOT NULL UNIQUE
 );
 
 CREATE TABLE jobs (

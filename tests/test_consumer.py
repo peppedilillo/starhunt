@@ -12,6 +12,8 @@ import pytest
 
 from starhunt import consumer
 from starhunt.consumer import DEFAULT_CONESEARCH_TOTAL
+from starhunt.consumer import NoticeJSON
+from starhunt.consumer import NoticeVOEvent
 from starhunt.consumer import schedule_ztf_conesearch
 from starhunt.consumer import ZTF_CONESEARCH_JOB_TYPE
 from starhunt.db import get_or_create_event
@@ -54,18 +56,41 @@ def notice_row_by_ivorn(conn, ivorn: str):
         cur.execute(
             """
             SELECT
+                notices.topic,
+                notices.mission,
+                notices.instrument,
+                notices.is_retraction,
+                notices.ra,
+                notices.dec,
+                notices.err_radius,
+                notices.raw_uri
+            FROM notices
+            JOIN notice_voevents
+                ON notice_voevents.notice_id = notices.id
+            WHERE notice_voevents.ivorn = %s
+            """,
+            (ivorn,),
+        )
+        return cur.fetchone()
+
+
+def notice_row_by_raw_uri(conn, raw_uri: str):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                format,
                 topic,
                 mission,
                 instrument,
                 is_retraction,
                 ra,
                 dec,
-                err_radius,
-                raw_uri
+                err_radius
             FROM notices
-            WHERE ivorn = %s
+            WHERE raw_uri = %s
             """,
-            (ivorn,),
+            (raw_uri,),
         )
         return cur.fetchone()
 
@@ -76,11 +101,15 @@ def retraction_state_by_ivorn(conn, ivorn: str):
             """
             SELECT
                 target.is_retraction,
-                retractor.ivorn
+                retractor_voevent.ivorn
             FROM notices AS target
+            JOIN notice_voevents AS target_voevent
+                ON target_voevent.notice_id = target.id
             LEFT JOIN notices AS retractor
                 ON retractor.id = target.retracted_by
-            WHERE target.ivorn = %s
+            LEFT JOIN notice_voevents AS retractor_voevent
+                ON retractor_voevent.notice_id = retractor.id
+            WHERE target_voevent.ivorn = %s
             """,
             (ivorn,),
         )
@@ -379,6 +408,7 @@ def test_parse_message_normalizes_svom_retraction():
     notice = normalized_notice(path)
     parsed = parsed_notice(path)
 
+    assert isinstance(notice, NoticeVOEvent)
     assert notice.mission == "SVOM"
     assert notice.localization is None
     assert notice.ivorn == parsed.ivorn
@@ -386,16 +416,36 @@ def test_parse_message_normalizes_svom_retraction():
     assert notice.retractions == parsed.retractions
 
 
+def test_parse_message_normalizes_einstein_probe_wxt_alert():
+    path = next(path for path in fixture_paths() if fixture_topic(path) == "gcn.notices.einstein_probe.wxt.alert")
+    notice = normalized_notice(path)
+    parsed = parsed_notice(path)
+
+    assert isinstance(notice, NoticeJSON)
+    assert notice.mission == "Einstein Probe"
+    assert notice.instrument == "WXT"
+    assert notice.burst_id == parsed.id[0]
+    assert notice.published_at == parsed.trigger_time
+    assert notice.burst_datetime == parsed.trigger_time
+    assert notice.retractions == ()
+    assert notice.localization is not None
+    assert notice.localization.ra == parsed.ra
+    assert notice.localization.dec == parsed.dec
+    assert notice.localization.err_radius == parsed.ra_dec_error
+
+
 def test_svom_retraction_marks_local_cited_notice(db_conn):
     trigger = next(
         path
         for path in fixture_paths()
-        if normalized_notice(path).ivorn == "ivo://org.svom/fsc#sb26043009_grm-trigger"
+        if isinstance(normalized_notice(path), NoticeVOEvent)
+        and normalized_notice(path).ivorn == "ivo://org.svom/fsc#sb26043009_grm-trigger"
     )
     retraction = next(
         path
         for path in fixture_paths()
-        if normalized_notice(path).ivorn == "ivo://org.svom/fsc#sb26043009_retraction"
+        if isinstance(normalized_notice(path), NoticeVOEvent)
+        and normalized_notice(path).ivorn == "ivo://org.svom/fsc#sb26043009_retraction"
     )
 
     insert_fixture(db_conn, trigger)
@@ -410,6 +460,28 @@ def test_svom_retraction_marks_local_cited_notice(db_conn):
         None,
     )
     assert table_counts(db_conn) == (1, 2, 0, DEFAULT_CONESEARCH_TOTAL)
+
+
+def test_einstein_probe_wxt_notice_stores_coordinates_without_voevent_row(db_conn):
+    path = next(path for path in fixture_paths() if fixture_topic(path) == "gcn.notices.einstein_probe.wxt.alert")
+    notice = parsed_notice(path)
+
+    insert_fixture(db_conn, path)
+
+    row = notice_row_by_raw_uri(db_conn, path.resolve().as_uri())
+    assert row == (
+        "json",
+        fixture_topic(path),
+        "Einstein Probe",
+        "WXT",
+        False,
+        notice.ra,
+        notice.dec,
+        notice.ra_dec_error,
+    )
+    with db_conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM notice_voevents")
+        assert cur.fetchone()[0] == 0
 
 
 def test_svom_notices_from_different_instruments_share_event(db_conn):

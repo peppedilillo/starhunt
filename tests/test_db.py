@@ -14,7 +14,8 @@ from conftest import parsed_notice
 
 from starhunt.db import find_best_localization
 from starhunt.db import get_or_create_event
-from starhunt.db import insert_notice
+from starhunt.db import insert_notice_json
+from starhunt.db import insert_notice_voevent
 from starhunt.db import Localization
 from starhunt.db import mark_retracted_notices
 
@@ -46,12 +47,12 @@ def test_get_or_create_event_returns_existing_event_info(db_conn):
     assert second.event_id == first.event_id
 
 
-def test_insert_notice_is_idempotent_by_kafka_coordinates(db_conn):
+def test_insert_notice_voevent_is_idempotent_by_kafka_coordinates(db_conn):
     published_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
     with db_conn.cursor() as cur:
         event = get_or_create_event(cur, external_id="Fermi:kafka-idempotent")
-        first = insert_notice(
+        first = insert_notice_voevent(
             cur,
             event_id=event.event_id,
             ivorn="ivo://nasa.gsfc.gcn/Fermi#kafka-idempotent",
@@ -65,7 +66,7 @@ def test_insert_notice_is_idempotent_by_kafka_coordinates(db_conn):
             burst_datetime=published_at,
             raw_uri="file:///tmp/kafka-idempotent.xml",
         )
-        second = insert_notice(
+        second = insert_notice_voevent(
             cur,
             event_id=event.event_id,
             ivorn="ivo://nasa.gsfc.gcn/Fermi#kafka-idempotent",
@@ -86,12 +87,59 @@ def test_insert_notice_is_idempotent_by_kafka_coordinates(db_conn):
     assert notice_count == 1
 
 
-def test_insert_notice_rejects_duplicate_ivorn_at_different_kafka_coordinates(db_conn):
+def test_insert_notice_json_is_idempotent_by_kafka_coordinates(db_conn):
+    published_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    with db_conn.cursor() as cur:
+        event = get_or_create_event(cur, external_id="Einstein Probe:json-idempotent")
+        first = insert_notice_json(
+            cur,
+            event_id=event.event_id,
+            topic="gcn.notices.einstein_probe.wxt.alert",
+            kafka_partition=7,
+            kafka_offset=42,
+            mission="Einstein Probe",
+            instrument="WXT",
+            is_retraction=False,
+            published_at=published_at,
+            burst_datetime=published_at,
+            raw_uri="file:///tmp/json-idempotent.json",
+            ra=1,
+            dec=2,
+            err_radius=0.1,
+        )
+        second = insert_notice_json(
+            cur,
+            event_id=event.event_id,
+            topic="gcn.notices.einstein_probe.wxt.alert",
+            kafka_partition=7,
+            kafka_offset=42,
+            mission="Einstein Probe",
+            instrument="WXT",
+            is_retraction=False,
+            published_at=published_at,
+            burst_datetime=published_at,
+            raw_uri="file:///tmp/json-idempotent.json",
+            ra=1,
+            dec=2,
+            err_radius=0.1,
+        )
+        cur.execute("SELECT count(*) FROM notices")
+        notice_count = cur.fetchone()[0]
+        cur.execute("SELECT count(*) FROM notice_voevents")
+        voevent_count = cur.fetchone()[0]
+
+    assert second == first
+    assert notice_count == 1
+    assert voevent_count == 0
+
+
+def test_insert_notice_voevent_rejects_duplicate_ivorn_at_different_kafka_coordinates(db_conn):
     published_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
     with db_conn.cursor() as cur:
         event = get_or_create_event(cur, external_id="Fermi:duplicate-ivorn")
-        insert_notice(
+        insert_notice_voevent(
             cur,
             event_id=event.event_id,
             ivorn="ivo://nasa.gsfc.gcn/Fermi#duplicate-ivorn",
@@ -107,7 +155,7 @@ def test_insert_notice_rejects_duplicate_ivorn_at_different_kafka_coordinates(db
         )
 
         with pytest.raises(psycopg.errors.UniqueViolation):
-            insert_notice(
+            insert_notice_voevent(
                 cur,
                 event_id=event.event_id,
                 ivorn="ivo://nasa.gsfc.gcn/Fermi#duplicate-ivorn",
@@ -273,7 +321,7 @@ def test_find_best_localization_ignores_localization_retracted_before_cutoff(db_
 
     with db_conn.cursor() as cur:
         event = get_or_create_event(cur, external_id="SVOM:retracted-before-cutoff")
-        insert_notice(
+        insert_notice_voevent(
             cur,
             event_id=event.event_id,
             ivorn="ivo://org.svom/fsc#retracted-before-cutoff_slewing",
@@ -290,7 +338,7 @@ def test_find_best_localization_ignores_localization_retracted_before_cutoff(db_
             dec=2,
             err_radius=0.1,
         )
-        retraction_id = insert_notice(
+        retraction_id = insert_notice_voevent(
             cur,
             event_id=event.event_id,
             ivorn="ivo://org.svom/fsc#retracted-before-cutoff_retraction",
@@ -323,7 +371,7 @@ def test_find_best_localization_keeps_localization_retracted_after_cutoff(db_con
 
     with db_conn.cursor() as cur:
         event = get_or_create_event(cur, external_id="SVOM:retracted-after-cutoff")
-        insert_notice(
+        insert_notice_voevent(
             cur,
             event_id=event.event_id,
             ivorn="ivo://org.svom/fsc#retracted-after-cutoff_slewing",
@@ -340,7 +388,7 @@ def test_find_best_localization_keeps_localization_retracted_after_cutoff(db_con
             dec=2,
             err_radius=0.1,
         )
-        retraction_id = insert_notice(
+        retraction_id = insert_notice_voevent(
             cur,
             event_id=event.event_id,
             ivorn="ivo://org.svom/fsc#retracted-after-cutoff_retraction",

@@ -15,6 +15,7 @@ from typing import Callable, Literal
 
 from confluent_kafka import Message
 from gcn_kafka import Consumer
+from gcn_parser.ep import parse_einstein_probe_wxt
 from gcn_parser.fermi import parse_fermi_gbm_alert
 from gcn_parser.fermi import parse_fermi_gbm_fin_pos
 from gcn_parser.fermi import parse_fermi_gbm_flt_pos
@@ -29,7 +30,8 @@ from psycopg import Connection
 
 from .db import get_or_create_event
 from .db import init_db_conn
-from .db import insert_notice
+from .db import insert_notice_json
+from .db import insert_notice_voevent
 from .db import Localization
 from .db import mark_retracted_notices
 from .utils import is_tz_aware
@@ -59,14 +61,25 @@ class Topic:
 class Notice:
     """A normalized GCN notice."""
 
-    ivorn: str
     burst_id: str
     localization: Localization | None
     published_at: datetime
     burst_datetime: datetime
     mission: str
     instrument: str
-    retractions: tuple[str, ...] = ()
+    retractions: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class NoticeVOEvent(Notice):
+    """A normalized VOEvent notice."""
+
+    ivorn: str
+
+
+@dataclass(frozen=True)
+class NoticeJSON(Notice):
+    """A normalized JSON notice."""
 
 
 def parse_svom_grm_topic(value: bytes):
@@ -95,6 +108,7 @@ TOPICS = [
     Topic("gcn.notices.svom.voevent.eclairs", "xml", parse_svom_eclairs_topic),
     Topic("gcn.notices.svom.voevent.grm", "xml", parse_svom_grm_topic),
     Topic("gcn.notices.svom.voevent.mxt", "xml", parse_svom_mxt_topic),
+    Topic("gcn.notices.einstein_probe.wxt.alert", "json", parse_einstein_probe_wxt),
 ]
 
 SUFFIXES = {t.topic: t.suffix for t in TOPICS}
@@ -166,7 +180,7 @@ def parse_message(message: Message) -> Notice:
 
     match topic:
         case "gcn.classic.voevent.FERMI_GBM_ALERT":
-            return Notice(
+            return NoticeVOEvent(
                 ivorn=parsed_notice.ivorn,
                 burst_id=str(parsed_notice.trig_id),
                 localization=None,
@@ -174,6 +188,7 @@ def parse_message(message: Message) -> Notice:
                 burst_datetime=parsed_notice.burst_datetime,
                 mission="Fermi",
                 instrument="GBM",
+                retractions=(),
             )
         case (
             "gcn.classic.voevent.FERMI_GBM_FIN_POS"
@@ -185,7 +200,7 @@ def parse_message(message: Message) -> Notice:
                 parsed_notice.dec,
                 parsed_notice.error_radius,
             )
-            return Notice(
+            return NoticeVOEvent(
                 ivorn=parsed_notice.ivorn,
                 burst_id=str(parsed_notice.trig_id),
                 localization=localization,
@@ -193,6 +208,7 @@ def parse_message(message: Message) -> Notice:
                 burst_datetime=parsed_notice.burst_datetime,
                 mission="Fermi",
                 instrument="GBM",
+                retractions=(),
             )
         case (
             "gcn.notices.svom.voevent.eclairs"
@@ -210,7 +226,7 @@ def parse_message(message: Message) -> Notice:
                 )
                 retractions = ()
 
-            return Notice(
+            return NoticeVOEvent(
                 ivorn=parsed_notice.ivorn,
                 burst_id=parsed_notice.burst_id,
                 localization=localization,
@@ -219,6 +235,23 @@ def parse_message(message: Message) -> Notice:
                 mission="SVOM",
                 instrument=parsed_notice.instrument,
                 retractions=retractions,
+            )
+        case "gcn.notices.einstein_probe.wxt.alert":
+            if len(parsed_notice.id) != 1:
+                raise ValueError("Einstein Probe WXT notices must have exactly one id")
+            localization = notice_localization(
+                parsed_notice.ra,
+                parsed_notice.dec,
+                parsed_notice.ra_dec_error,
+            )
+            return NoticeJSON(
+                burst_id=parsed_notice.id[0],
+                localization=localization,
+                published_at=parsed_notice.trigger_time,
+                burst_datetime=parsed_notice.trigger_time,
+                mission="Einstein Probe",
+                instrument=parsed_notice.instrument,
+                retractions=(),
             )
         case _:
             raise ValueError(f"Unsupported message topic: {topic}")
@@ -295,6 +328,43 @@ def schedule_ztf_conesearch(
         )
 
 
+def insert_notice(
+    cursor,
+    notice: Notice,
+    *,
+    event_id: int,
+    topic: str,
+    kafka_partition: int,
+    kafka_offset: int,
+    raw_uri: str,
+) -> int:
+    """Insert a normalized notice through the matching storage path."""
+    localization = notice.localization
+    notice_kwargs = {
+        "event_id": event_id,
+        "topic": topic,
+        "kafka_partition": kafka_partition,
+        "kafka_offset": kafka_offset,
+        "mission": notice.mission,
+        "instrument": notice.instrument,
+        "is_retraction": bool(notice.retractions),
+        "published_at": notice.published_at,
+        "burst_datetime": notice.burst_datetime,
+        "raw_uri": raw_uri,
+        "ra": localization.ra if localization is not None else None,
+        "dec": localization.dec if localization is not None else None,
+        "err_radius": localization.err_radius if localization is not None else None,
+    }
+
+    match notice:
+        case NoticeVOEvent(ivorn=ivorn):
+            return insert_notice_voevent(cursor, ivorn=ivorn, **notice_kwargs)
+        case NoticeJSON():
+            return insert_notice_json(cursor, **notice_kwargs)
+        case _:
+            raise TypeError(f"Unsupported normalized notice type: {type(notice).__name__}")
+
+
 def insert_message(
     message: Message,
     filepath: Path,
@@ -309,7 +379,6 @@ def insert_message(
     """
     topic = message.topic()
     notice = parse_message(message)
-    localization = notice.localization
     is_retraction = bool(notice.retractions)
     # we annotate the mission for disambiguation: events are not mission-specific
     event_external_id = f"{notice.mission}:{notice.burst_id}"
@@ -338,20 +407,12 @@ def insert_message(
                 )
             notice_id = insert_notice(
                 cursor,
+                notice,
                 event_id=event_info.event_id,
-                ivorn=notice.ivorn,
                 topic=topic,
                 kafka_partition=message.partition(),
                 kafka_offset=message.offset(),
-                mission=notice.mission,
-                instrument=notice.instrument,
-                is_retraction=is_retraction,
-                published_at=notice.published_at,
-                burst_datetime=notice.burst_datetime,
                 raw_uri=raw_uri,
-                ra=localization.ra if localization is not None else None,
-                dec=localization.dec if localization is not None else None,
-                err_radius=localization.err_radius if localization is not None else None,
             )
             if is_retraction:
                 mark_retracted_notices(

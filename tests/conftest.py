@@ -26,6 +26,7 @@ TOPICS_BY_FILENAME_SUFFIX = {
     "gcn_notices_svom_voevent_eclairs.xml": "gcn.notices.svom.voevent.eclairs",
     "gcn_notices_svom_voevent_grm.xml": "gcn.notices.svom.voevent.grm",
     "gcn_notices_svom_voevent_mxt.xml": "gcn.notices.svom.voevent.mxt",
+    "gcn_notices_einstein_probe_wxt_alert.json": "gcn.notices.einstein_probe.wxt.alert",
 }
 
 
@@ -73,7 +74,7 @@ def reset_database(conn):
 
 
 def fixture_paths():
-    return sorted(FIXTURES.glob("*.xml"))
+    return sorted([*FIXTURES.glob("*.xml"), *FIXTURES.glob("*.json")])
 
 
 def fixture_topic(path: Path):
