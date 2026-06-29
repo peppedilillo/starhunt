@@ -20,6 +20,7 @@ def main(
     output_directory: Path,
     worker_id: str | None = None,
 ):
-    """Execute scheduled Starhunt jobs and store outputs in OUTPUT_DIRECTORY."""
+    """Query external resources such as survey alert streams and write
+    result files to OUTPUT_DIRECTORY."""
     configure_logging("worker")
     run_worker_main(output_directory=output_directory, worker_id=worker_id)

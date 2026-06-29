@@ -14,6 +14,8 @@ docker compose --env-file .env ps
 docker compose --env-file .env logs consumer worker | uv run pretty
 ```
 
+The `artifacts` directory stores raw notices and non-empty broker responses.
+
 ## Tests
 
 ```shell
@@ -25,5 +27,5 @@ uv run pytest --smoke
 
 ## Linter rules
 ```shell
-uv run black -l 120 . --target-version py313 & uv run isort --profile google .
+uv run black -l 120 . --target-version py313 && uv run isort --profile google .
 ```

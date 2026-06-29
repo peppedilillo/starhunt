@@ -35,7 +35,6 @@ import click
 from rich.console import Console
 from rich.text import Text
 
-
 COMPOSE_LINE = re.compile(r"^(?P<prefix>.*?\|\s?)(?P<payload>.*)$")
 LEVELS = {
     "debug": 10,
@@ -78,7 +77,7 @@ def _context_items(context: Any) -> list[str]:
         "job_id",
         "event_id",
         "worker_id",
-        "artifact_id",
+        "conesearch_id",
         "recovered_jobs",
         "error",
     ):
@@ -134,7 +133,7 @@ def render_line(
     try:
         record = json.loads(payload)
     except json.JSONDecodeError:
-        # our logs are json, we want to highlight them so we dim the rest
+        # non-json lines are usually dependency logs; keep them quiet.
         if cutoff is None:
             output = Text(prefix)
             output.append(payload, style="dim")
@@ -142,7 +141,7 @@ def render_line(
         return None
 
     if not isinstance(record, dict):
-        # our logs are json maps
+        # starhunt logs are json objects.
         if cutoff is None:
             output = Text(prefix)
             output.append(payload, style="dim")

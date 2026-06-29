@@ -1,10 +1,8 @@
 """
-Worker process for executing scheduled background jobs. In a loop:
+Worker process for scheduled jobs.
 
-- Poll for one due job in `pending` or retryable `failed` state.
-- Sleep briefly when no job is available.
-- Execute the claimed job in-process.
-- Persist either success metadata or failure metadata before moving on.
+The worker claims one due job, executes it, and records success or failure
+before moving on.
 """
 
 from datetime import datetime
@@ -20,9 +18,8 @@ from psycopg import Connection
 from .consumer import ZTF_CONESEARCH_JOB_TYPE
 from .db import claim_expired_jobs
 from .db import find_best_localization
-from .db import get_or_create_milestone
 from .db import init_db_conn
-from .db import insert_artifact
+from .db import insert_conesearch
 from .db import JobInfo
 from .db import mark_job_dead
 from .db import mark_job_failed
@@ -35,7 +32,6 @@ DEFAULT_JOB_RETRY_DELAY = timedelta(hours=12)
 DEFAULT_CONESEARCH_TIMEOUT = 60
 
 
-ZTF_FINK_CONESEARCH_ARTIFACT_TYPE = "ztf.fink.conesearch.json"
 logger = logging.getLogger(__name__)
 
 
@@ -46,15 +42,15 @@ class MissingLocalization(Exception):
 
 
 def write_response(job: JobInfo, content: bytes, outdir: Path) -> Path:
-    """Write a job response to disk.
+    """Write a broker response to disk.
 
     Args:
         job: Job that produced the response.
-        content: Raw response bytes to persist.
-        outdir: Directory where the response file should be written.
+        content: Raw response bytes.
+        outdir: Output directory.
 
     Returns:
-        Path to the written response file.
+        Path to the written result file.
     """
     filepath = outdir / f"{job.job_type}_{job.job_id}.json"
     filepath.write_bytes(content)
@@ -67,7 +63,7 @@ def execute_ztf_fink_conesearch(
     outdir: Path,
     timeout: float | None,
     query_fn=conesearch_fink_ztf,
-) -> int | None:
+) -> int:
     """Execute a ZTF Fink conesearch job.
 
     Args:
@@ -78,48 +74,54 @@ def execute_ztf_fink_conesearch(
         query_fn: Callable used to run the conesearch query.
 
     Returns:
-        Result artifact primary key for non-empty responses, else None.
+        Conesearch primary key.
 
     Raises:
         MissingLocalization: If no usable localization is available.
     """
-    # use the planned schedule as the localization cutoff so retries and
-    # backfills reproduce the information available at the intended run time.
+    # use `scheduled_at` as the localization cutoff so retries see the same
+    #  localization as the original run. This ensures that, if query endpoint is stable,
+    # the same result will be returned regardless of the amount of retries.
+    #
+    # An example:
+    #    * event arrives at t=0 with localization, job `scheduled_at` is set to t=+1,
+    #    * at t=+1 the job fails. `run_after` is set at t=+3
+    #    * a new localization arrives at t=+2
+    #    * at t=3 the job runs again with the localization provided at t=0,
+    #      ignoring the localization arrived at t=+2
     localization = find_best_localization(cursor, job.event_id, job.scheduled_at)
     if localization is None:
         raise MissingLocalization("No usable localization available for event")
 
+    radius_arcsec = localization.err_radius * 3600
     result = query_fn(
         ra=localization.ra,
         dec=localization.dec,
-        radius=localization.err_radius * 3600,
+        radius=radius_arcsec,
         startdate=job.subject_time_start,
         stopdate=job.subject_time_end,
-        # prevents a stalled Fink response from holding a job and transaction indefinitely.
+        # Prevent a stalled Fink response from holding a transaction indefinitely.
         timeout=timeout,
     )
-    if len(result.json()) == 0:
-        return None
+    alerts = result.json()
+    result_uri = None
+    if alerts:
+        result_uri = write_response(job, result.content, outdir).resolve().as_uri()
 
-    filepath = write_response(job, result.content, outdir)
-    milestone_id = get_or_create_milestone(
+    return insert_conesearch(
         cursor,
         event_id=job.event_id,
-        external_id=f"{job.job_type}:{job.job_id}",
-        subtype=job.job_type,
-        published_at=datetime.now(timezone.utc),
+        job_id=job.job_id,
+        broker="fink",
+        survey="ztf",
         subject_time_start=job.subject_time_start,
         subject_time_end=job.subject_time_end,
+        queried_at=datetime.now(timezone.utc),
         ra=localization.ra,
         dec=localization.dec,
-        err_radius=localization.err_radius,
-        milestone_type="conesearch",
-    )
-    return insert_artifact(
-        cursor,
-        milestone_id=milestone_id,
-        uri=filepath.resolve().as_uri(),
-        artifact_type=ZTF_FINK_CONESEARCH_ARTIFACT_TYPE,
+        radius_arcsec=radius_arcsec,
+        alert_count=len(alerts),
+        result_uri=result_uri,
     )
 
 
@@ -131,28 +133,19 @@ def run_job(
     timeout: float | None,
     query_fn=conesearch_fink_ztf,
 ):
-    """Execute a claimed job and persist its lifecycle state.
-
-    Consumer code inserts jobs with a stable ``scheduled_at`` cutoff and a
-    mutable ``run_after`` eligibility time. A worker claims one due job
-    atomically before calling this function, marking it ``running``, assigning
-    ``worker_id``, and incrementing ``attempt_count``.
+    """Execute a claimed job and update its state.
 
     For ``ztf_fink_conesearch`` jobs, the worker resolves the best localization
-    available for the event at the job schedule time, runs the Fink conesearch,
-    writes the raw response to disk and, if the response is not empty, stores a
-    ``conesearch`` milestone plus result artifact. Finally, the job is marked
-    as ``succeeded``.
+    available at ``scheduled_at``, runs the Fink conesearch, stores a
+    ``conesearch`` row, and marks the job as ``succeeded``.
 
-    If execution fails but retries remain, the job is marked ``failed``,
-    ``last_error`` is stored, and ``run_after`` is moved later so it can be
-    retried. If execution fails after attempts are exhausted, or if the job type
-    is unsupported, the job is marked ``dead``.
+    Failed jobs are retried until ``max_attempts`` is reached. Unsupported job
+    types are marked ``dead``.
 
     Args:
         db_conn: Database connection used for job state transitions.
         job: Claimed job to execute.
-        outdir: Directory where query responses should be written.
+        outdir: Directory for non-empty query responses.
         retry_delay: Delay before a failed job is eligible to run again.
         timeout: Maximum seconds to wait for the external query response.
         query_fn: Callable used to run the conesearch query. Intended for testing.
@@ -175,11 +168,11 @@ def run_job(
                     timeout=timeout,
                     query_fn=query_fn,
                 )
-                mark_job_succeeded(cursor, job.job_id, result)
+                mark_job_succeeded(cursor, job.job_id)
             db_conn.commit()
             logger.info(
                 "Job succeeded",
-                extra=log_context | {"status": "succeeded", "artifact_id": result},
+                extra=log_context | {"status": "succeeded", "conesearch_id": result},
             )
         else:
             with db_conn.cursor() as cursor:
@@ -217,12 +210,12 @@ def run_worker(
     retry_delay: timedelta,
     timeout: float | None,
 ):
-    """Continuously claim and execute scheduled jobs.
+    """Claim and execute jobs forever.
 
     Args:
-        db_conn: Database connection used to claim and run jobs.
-        outdir: Directory where query responses should be written.
-        worker_id: Identifier assigned to claimed jobs.
+        db_conn: Database connection.
+        outdir: Directory for non-empty query responses.
+        worker_id: Identifier for claimed jobs.
         poll_interval: Seconds to sleep when no job is available.
         retry_delay: Delay before retryable jobs are eligible again.
         timeout: Maximum seconds to wait for external query responses.
@@ -256,10 +249,10 @@ def main(
     output_directory: Path,
     worker_id: str | None,
 ):
-    """Start a worker process.
+    """Start the worker.
 
     Args:
-        output_directory: Directory where query responses should be written.
+        output_directory: Directory for non-empty query responses.
         worker_id: Optional worker identifier. A UUID is generated when absent.
     """
     output_directory.mkdir(parents=True, exist_ok=True)

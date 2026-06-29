@@ -15,7 +15,6 @@ from starhunt.db import claim_expired_jobs
 from starhunt.db import get_or_create_event
 from starhunt.db import pick_job
 from starhunt.worker import run_job
-from starhunt.worker import ZTF_FINK_CONESEARCH_ARTIFACT_TYPE
 
 TEST_RETRY_DELAY = timedelta(minutes=10)
 TEST_QUERY_TIMEOUT = 7
@@ -29,7 +28,6 @@ def job_state(conn, job_id: int):
                 status,
                 scheduled_at,
                 run_after,
-                artifact_id,
                 last_error,
                 completed_at
             FROM jobs
@@ -71,9 +69,7 @@ def create_running_job(
     with conn.cursor() as cur:
         event = get_or_create_event(
             cur,
-            external_id=f"Fermi.GBM:{worker_id}",
-            mission="Fermi",
-            instrument="GBM",
+            external_id=f"Fermi:{worker_id}",
         )
         cur.execute(
             """
@@ -116,20 +112,19 @@ def conesearch_result_row(conn, job_id: int):
         cur.execute(
             """
             SELECT
-                milestones.milestone_type,
-                milestones.milestone_subtype,
-                milestones.ra,
-                milestones.dec,
-                milestones.err_radius,
-                artifacts.id,
-                artifacts.artifact_type,
-                artifacts.uri
-            FROM milestones
-            JOIN artifacts
-                ON artifacts.milestone_id = milestones.id
-            WHERE milestones.external_id = %s
+                broker,
+                survey,
+                subject_time_start,
+                subject_time_end,
+                ra,
+                dec,
+                radius_arcsec,
+                alert_count,
+                result_uri
+            FROM conesearches
+            WHERE job_id = %s
             """,
-            (f"{ZTF_CONESEARCH_JOB_TYPE}:{job_id}",),
+            (job_id,),
         )
         return cur.fetchone()
 
@@ -263,9 +258,7 @@ def test_pick_job_uses_run_after_for_worker_eligibility(db_conn):
     with db_conn.cursor() as cur:
         event = get_or_create_event(
             cur,
-            external_id="Fermi.GBM:future-run-after",
-            mission="Fermi",
-            instrument="GBM",
+            external_id="Fermi:future-run-after",
         )
         cur.execute(
             """
@@ -336,25 +329,25 @@ def test_run_job_executes_conesearch_and_persists_result(db_conn, tmp_path):
         "timeout": TEST_QUERY_TIMEOUT,
     }
 
-    status, scheduled_at, run_after, artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
+    status, scheduled_at, run_after, last_error, completed_at = job_state(db_conn, job.job_id)
     assert status == "succeeded"
     assert scheduled_at == job.scheduled_at
     assert run_after == job.run_after
-    assert artifact_id is not None
     assert last_error is None
     assert completed_at is not None
 
     result_row = conesearch_result_row(db_conn, job.job_id)
-    assert result_row[:5] == (
-        "conesearch",
-        ZTF_CONESEARCH_JOB_TYPE,
+    assert result_row[:8] == (
+        "fink",
+        "ztf",
+        job.subject_time_start,
+        job.subject_time_end,
         notice.ra,
         notice.dec,
-        notice.error_radius,
+        notice.error_radius * 3600,
+        1,
     )
-    assert result_row[5] == artifact_id
-    assert result_row[6] == ZTF_FINK_CONESEARCH_ARTIFACT_TYPE
-    result_path = Path(result_row[7].removeprefix("file://"))
+    result_path = Path(result_row[8].removeprefix("file://"))
     assert result_path.read_bytes() == b'[{"i:objectId":"ZTF-test"}]'
 
 
@@ -374,11 +367,10 @@ def test_run_job_missing_localization_marks_job_failed(db_conn, tmp_path):
         timeout=TEST_QUERY_TIMEOUT,
     )
 
-    status, scheduled_at, run_after, artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
+    status, scheduled_at, run_after, last_error, completed_at = job_state(db_conn, job.job_id)
     assert status == "failed"
     assert scheduled_at == job.scheduled_at
     assert run_after > job.run_after
-    assert artifact_id is None
     assert "No usable localization" in last_error
     assert completed_at is None
 
@@ -400,14 +392,23 @@ def test_run_job_empty_result_marks_success_without_persistence(db_conn, tmp_pat
         timeout=TEST_QUERY_TIMEOUT,
     )
 
-    status, scheduled_at, run_after, artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
+    status, scheduled_at, run_after, last_error, completed_at = job_state(db_conn, job.job_id)
     assert status == "succeeded"
     assert scheduled_at == job.scheduled_at
     assert run_after == job.run_after
-    assert artifact_id is None
     assert last_error is None
     assert completed_at is not None
-    assert conesearch_result_row(db_conn, job.job_id) is None
+    assert conesearch_result_row(db_conn, job.job_id) == (
+        "fink",
+        "ztf",
+        job.subject_time_start,
+        job.subject_time_end,
+        parsed_notice(path).ra,
+        parsed_notice(path).dec,
+        parsed_notice(path).error_radius * 3600,
+        0,
+        None,
+    )
     result_path = tmp_path / f"{job.job_type}_{job.job_id}.json"
     assert not result_path.exists()
 
@@ -433,9 +434,8 @@ def test_run_job_query_failure_can_dead_letter(db_conn, tmp_path):
         timeout=TEST_QUERY_TIMEOUT,
     )
 
-    status, _, _, artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
+    status, _, _, last_error, completed_at = job_state(db_conn, job.job_id)
     assert status == "dead"
-    assert artifact_id is None
     assert last_error == "boom"
     assert completed_at is not None
 
@@ -445,9 +445,7 @@ def test_run_job_dead_letters_unsupported_job_type(db_conn, tmp_path):
     with db_conn.cursor() as cur:
         event = get_or_create_event(
             cur,
-            external_id="Fermi.GBM:unsupported-job-event",
-            mission="Fermi",
-            instrument="GBM",
+            external_id="Fermi:unsupported-job-event",
         )
         cur.execute(
             """
@@ -483,8 +481,7 @@ def test_run_job_dead_letters_unsupported_job_type(db_conn, tmp_path):
         timeout=TEST_QUERY_TIMEOUT,
     )
 
-    status, _, _, artifact_id, last_error, completed_at = job_state(db_conn, job.job_id)
+    status, _, _, last_error, completed_at = job_state(db_conn, job.job_id)
     assert status == "dead"
-    assert artifact_id is None
     assert last_error == "Unsupported job type: unsupported_job_type"
     assert completed_at is not None

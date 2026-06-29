@@ -10,8 +10,7 @@ import os
 import sys
 from typing import Any
 
-
-# everything else will be added to (schema-free) context
+# extra log fields are stored under `context`.
 _STANDARD_RECORD_FIELDS = frozenset(
     logging.LogRecord(
         name="",
@@ -123,8 +122,9 @@ def configure_logging(service: str) -> None:
 
     handler = logging.StreamHandler()
     handler.setFormatter(JsonFormatter())
-    # this ensures idempotency but will result in losing existing handlers
-    # since this codebase is client code already, we deem this acceptable
+    # keep setup idempotent for CLI entrypoints.
+    # comes with a side-effect: potential user-defined handlers are purged here.
+    # this was deemed not a problem as we do not expect downstream users but still.
     logger.handlers.clear()
     logger.addHandler(handler)
 

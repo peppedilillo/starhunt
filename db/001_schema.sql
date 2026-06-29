@@ -1,57 +1,44 @@
 CREATE TABLE events (
     id bigserial PRIMARY KEY,
+    -- mission-qualified for disambiguation only;
+    -- use notices.mission for mission metadata.
     external_id text NOT NULL UNIQUE,
-    mission text NOT NULL,
-    instrument text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE milestones (
+CREATE TABLE notices (
     id bigserial PRIMARY KEY,
     event_id bigint NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-    external_id text NOT NULL UNIQUE,
-    milestone_type text NOT NULL, -- e.g., `notice`, `conesearch`
-    milestone_subtype text NOT NULL,  -- e.g., a kafka notice topic, `ztf-fink-query`
+    ivorn text NOT NULL UNIQUE,
+    topic text NOT NULL,
+    mission text NOT NULL,
+    instrument text NOT NULL,
+    kind text NOT NULL,
     published_at timestamptz NOT NULL,
-    subject_time_start timestamptz NOT NULL,
-    subject_time_end timestamptz NOT NULL,
+    burst_datetime timestamptz NOT NULL,
     ra double precision,
     dec double precision,
     err_radius double precision,
+    raw_uri text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
 
-    CHECK (subject_time_end >= subject_time_start),
+    CHECK (kind IN ('alert', 'localization', 'retraction')),
+    -- all or nothing completeness
     CHECK (num_nonnulls(ra, dec, err_radius) IN (0, 3)),
     CHECK (ra IS NULL OR (ra >= 0 AND ra <= 360)),
     CHECK (dec IS NULL OR (dec >= -90 AND dec <= 90)),
     CHECK (err_radius IS NULL OR err_radius > 0)
 );
 
-CREATE TABLE artifacts (
-    id bigserial PRIMARY KEY,
-    milestone_id bigint NOT NULL REFERENCES milestones(id) ON DELETE CASCADE,
-    artifact_type text NOT NULL,
-    uri text NOT NULL,
-
-    UNIQUE (milestone_id, artifact_type, uri)
-);
-
-CREATE INDEX milestones_event_published_at_idx
-ON milestones (event_id, published_at);
-
-CREATE INDEX artifacts_milestone_idx
-ON artifacts (milestone_id);
-
-
 CREATE TABLE jobs (
     id bigserial PRIMARY KEY,
     event_id bigint NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-    artifact_id bigint REFERENCES artifacts(id) ON DELETE SET NULL,
     job_type text NOT NULL,
     subject_time_start timestamptz NOT NULL,
     subject_time_end timestamptz NOT NULL,
     scheduled_at timestamptz NOT NULL,
-    run_after timestamptz NOT NULL,  -- mutable, and intended to be edited with retries
+    -- mutable, and intended to be edited with retries
+    run_after timestamptz NOT NULL,
     status text NOT NULL DEFAULT 'pending',
     attempt_count integer NOT NULL DEFAULT 0,
     max_attempts integer NOT NULL,
@@ -68,6 +55,36 @@ CREATE TABLE jobs (
     CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'dead')),
     UNIQUE (event_id, job_type, subject_time_start, subject_time_end)
 );
+
+CREATE TABLE conesearches (
+    id bigserial PRIMARY KEY,
+    event_id bigint NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    job_id bigint NOT NULL UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
+    broker text NOT NULL,
+    survey text NOT NULL,
+    subject_time_start timestamptz NOT NULL,
+    subject_time_end timestamptz NOT NULL,
+    queried_at timestamptz NOT NULL,
+    ra double precision NOT NULL,
+    dec double precision NOT NULL,
+    radius_arcsec double precision NOT NULL,
+    alert_count integer NOT NULL,
+    result_uri text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+
+    CHECK (subject_time_end > subject_time_start),
+    CHECK (ra >= 0 AND ra <= 360),
+    CHECK (dec >= -90 AND dec <= 90),
+    CHECK (radius_arcsec > 0),
+    CHECK (alert_count >= 0),
+    CHECK ((alert_count = 0 AND result_uri IS NULL) OR (alert_count > 0 AND result_uri IS NOT NULL))
+);
+
+CREATE INDEX notices_event_published_at_idx
+ON notices (event_id, published_at);
+
+CREATE INDEX conesearches_event_queried_at_idx
+ON conesearches (event_id, queried_at);
 
 CREATE INDEX jobs_runnable_run_after_idx
 ON jobs (run_after)

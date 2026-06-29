@@ -11,10 +11,10 @@ from unittest.mock import Mock
 import pytest
 
 from starhunt import consumer
+from starhunt import worker
 from starhunt.db import JobInfo
 from starhunt.logging import configure_logging
 from starhunt.logging import JsonFormatter
-from starhunt import worker
 
 
 def make_record(
@@ -296,7 +296,7 @@ def test_worker_logs_success(monkeypatch):
 
     assert logger.info.call_args_list[0].args == ("Job started",)
     assert logger.info.call_args_list[1].args == ("Job succeeded",)
-    assert logger.info.call_args_list[1].kwargs["extra"]["artifact_id"] == 31
+    assert logger.info.call_args_list[1].kwargs["extra"]["conesearch_id"] == 31
 
 
 @pytest.mark.parametrize(

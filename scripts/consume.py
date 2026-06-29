@@ -29,7 +29,7 @@ def main(
     group_id: str | None = None,
     offset: Literal["earliest", "latest"] = "earliest",
 ):
-    """Consume GCN notices and store them in OUTPUT_DIRECTORY."""
+    """Consume GCN notices and write raw files to OUTPUT_DIRECTORY."""
     configure_logging("consumer")
     run_consumer_main(
         output_directory=output_directory,

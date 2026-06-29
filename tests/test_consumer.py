@@ -6,6 +6,7 @@ from conftest import event_fixture_groups
 from conftest import fixture_paths
 from conftest import fixture_topic
 from conftest import insert_fixture
+from conftest import normalized_notice
 from conftest import parsed_notice
 import pytest
 
@@ -21,8 +22,8 @@ def table_counts(conn):
         cur.execute("""
             SELECT
                 (SELECT count(*) FROM events),
-                (SELECT count(*) FROM milestones),
-                (SELECT count(*) FROM artifacts),
+                (SELECT count(*) FROM notices),
+                (SELECT count(*) FROM conesearches),
                 (SELECT count(*) FROM jobs)
             """)
         return cur.fetchone()
@@ -48,19 +49,23 @@ def job_rows(conn):
         return cur.fetchall()
 
 
-def milestone_row_by_external_id(conn, external_id: str):
+def notice_row_by_ivorn(conn, ivorn: str):
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT
-                milestone_subtype,
+                topic,
+                mission,
+                instrument,
+                kind,
                 ra,
                 dec,
-                err_radius
-            FROM milestones
-            WHERE external_id = %s
+                err_radius,
+                raw_uri
+            FROM notices
+            WHERE ivorn = %s
             """,
-            (external_id,),
+            (ivorn,),
         )
         return cur.fetchone()
 
@@ -137,9 +142,7 @@ def test_schedule_ztf_conesearch_creates_time_window_jobs(db_conn):
     with db_conn.cursor() as cur:
         event_info = get_or_create_event(
             cur,
-            external_id="Fermi.GBM:test-scheduled-event",
-            mission="Fermi",
-            instrument="GBM",
+            external_id="Fermi:test-scheduled-event",
         )
         schedule_ztf_conesearch(
             cur,
@@ -176,9 +179,7 @@ def test_schedule_ztf_conesearch_is_idempotent(db_conn):
     with db_conn.cursor() as cur:
         event_info = get_or_create_event(
             cur,
-            external_id="Fermi.GBM:test-idempotent-schedule",
-            mission="Fermi",
-            instrument="GBM",
+            external_id="Fermi:test-idempotent-schedule",
         )
         for _ in range(2):
             schedule_ztf_conesearch(
@@ -251,9 +252,7 @@ def test_schedule_ztf_conesearch_rejects_invalid_inputs(
     with db_conn.cursor() as cur:
         event_info = get_or_create_event(
             cur,
-            external_id="Fermi.GBM:test-invalid-schedule",
-            mission="Fermi",
-            instrument="GBM",
+            external_id="Fermi:test-invalid-schedule",
         )
         with pytest.raises(ValueError, match=message):
             schedule_ztf_conesearch(
@@ -267,9 +266,19 @@ def test_schedule_ztf_conesearch_rejects_invalid_inputs(
             )
 
 
-def test_can_insert_all_fermi_fixtures(db_conn):
+def test_can_insert_all_supported_fixtures(db_conn):
     paths = fixture_paths()
-    expected_events = {parsed_notice(path).trig_id for path in paths}
+    expected_events = {f"{notice.mission}:{notice.burst_id}" for notice in (normalized_notice(path) for path in paths)}
+    created_events = set()
+    scheduled_events = set()
+    for path in paths:
+        notice = normalized_notice(path)
+        event_id = f"{notice.mission}:{notice.burst_id}"
+        if event_id in created_events:
+            continue
+        created_events.add(event_id)
+        if notice.kind != "retraction":
+            scheduled_events.add(event_id)
 
     for path in paths:
         insert_fixture(db_conn, path)
@@ -277,8 +286,8 @@ def test_can_insert_all_fermi_fixtures(db_conn):
     assert table_counts(db_conn) == (
         len(expected_events),
         len(paths),
-        len(paths),
-        len(expected_events) * DEFAULT_CONESEARCH_TOTAL,
+        0,
+        len(scheduled_events) * DEFAULT_CONESEARCH_TOTAL,
     )
 
 
@@ -294,45 +303,114 @@ def test_reinserting_all_fixtures_is_idempotent(db_conn):
     assert table_counts(db_conn) == before
 
 
-def test_new_event_creates_event_milestone_and_artifact(db_conn):
+def test_new_event_creates_event_notice_and_jobs(db_conn):
     insert_fixture(db_conn, fixture_paths()[0])
 
-    assert table_counts(db_conn) == (1, 1, 1, DEFAULT_CONESEARCH_TOTAL)
+    assert table_counts(db_conn) == (1, 1, 0, DEFAULT_CONESEARCH_TOTAL)
 
 
-def test_known_event_adds_milestone_and_artifact_only(db_conn):
+def test_known_event_adds_notice_only(db_conn):
     first, second = fixture_pair_from_same_event()
 
     insert_fixture(db_conn, first)
-    assert table_counts(db_conn) == (1, 1, 1, DEFAULT_CONESEARCH_TOTAL)
+    assert table_counts(db_conn) == (1, 1, 0, DEFAULT_CONESEARCH_TOTAL)
 
     insert_fixture(db_conn, second)
-    assert table_counts(db_conn) == (1, 2, 2, DEFAULT_CONESEARCH_TOTAL)
+    assert table_counts(db_conn) == (1, 2, 0, DEFAULT_CONESEARCH_TOTAL)
 
 
-def test_alert_milestone_stores_null_localization(db_conn):
+def test_alert_notice_stores_null_localization(db_conn):
     path = next(path for path in fixture_paths() if fixture_topic(path) == "gcn.classic.voevent.FERMI_GBM_ALERT")
     notice = parsed_notice(path)
 
     insert_fixture(db_conn, path)
 
-    assert milestone_row_by_external_id(db_conn, notice.ivorn) == (
+    row = notice_row_by_ivorn(db_conn, notice.ivorn)
+    assert row[:7] == (
         fixture_topic(path),
+        "Fermi",
+        "GBM",
+        "alert",
         None,
         None,
         None,
     )
+    assert row[7] == path.resolve().as_uri()
 
 
-def test_localized_milestone_stores_coordinates(db_conn):
+def test_localized_notice_stores_coordinates(db_conn):
     path = next(path for path in fixture_paths() if fixture_topic(path) == "gcn.classic.voevent.FERMI_GBM_FLT_POS")
     notice = parsed_notice(path)
 
     insert_fixture(db_conn, path)
 
-    assert milestone_row_by_external_id(db_conn, notice.ivorn) == (
+    row = notice_row_by_ivorn(db_conn, notice.ivorn)
+    assert row[:7] == (
         fixture_topic(path),
+        "Fermi",
+        "GBM",
+        "localization",
         notice.ra,
         notice.dec,
         notice.error_radius,
     )
+    assert row[7] == path.resolve().as_uri()
+
+
+def test_parse_message_normalizes_svom_retraction():
+    path = next(path for path in fixture_paths() if normalized_notice(path).kind == "retraction")
+    notice = normalized_notice(path)
+
+    assert notice.mission == "SVOM"
+    assert notice.kind == "retraction"
+    assert notice.localization is None
+    assert notice.ivorn == parsed_notice(path).ivorn
+    assert notice.burst_id == parsed_notice(path).burst_id
+
+
+def test_svom_notices_from_different_instruments_share_event(db_conn):
+    paths = next(
+        paths
+        for paths in event_fixture_groups().values()
+        if {normalized_notice(path).instrument for path in paths} >= {"GRM", "ECLAIRs", "MXT"}
+    )
+
+    for path in paths:
+        insert_fixture(db_conn, path)
+
+    with db_conn.cursor() as cur:
+        cur.execute("SELECT external_id FROM events")
+        event_ids = [row[0] for row in cur.fetchall()]
+        cur.execute("SELECT DISTINCT mission FROM notices")
+        missions = [row[0] for row in cur.fetchall()]
+        cur.execute("SELECT DISTINCT instrument FROM notices ORDER BY instrument")
+        instruments = [row[0] for row in cur.fetchall()]
+
+    assert event_ids == [f"SVOM:{normalized_notice(paths[0]).burst_id}"]
+    assert missions == ["SVOM"]
+    assert instruments == ["ECLAIRs", "GRM", "MXT"]
+
+
+def test_svom_grm_negative_radius_stores_null_localization(db_conn):
+    path = next(
+        path
+        for path in fixture_paths()
+        if fixture_topic(path) == "gcn.notices.svom.voevent.grm"
+        and parsed_notice(path).error_radius is not None
+        and parsed_notice(path).error_radius < 0
+    )
+    notice = parsed_notice(path)
+
+    insert_fixture(db_conn, path)
+
+    row = notice_row_by_ivorn(db_conn, notice.ivorn)
+    assert row[:7] == (
+        fixture_topic(path),
+        "SVOM",
+        "GRM",
+        "alert",
+        None,
+        None,
+        None,
+    )
+    assert row[7] == path.resolve().as_uri()

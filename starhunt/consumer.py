@@ -1,8 +1,8 @@
-"""GCN Kafka consumer for persisting notices and scheduling follow-up jobs:
+"""Consume GCN notices and schedule follow-up jobs.
 
-- Poll selected topics from Kafka GCN stream and stores notices to disk.
-- Writes new events and follow-up to database.
-- Schedules alert cone search over event regions.
+- Poll supported Kafka topics.
+- Store raw notices on disk and summaries in the database.
+- Schedule ZTF/Fink alert conesearch for new events.
 """
 
 from dataclasses import dataclass
@@ -15,17 +15,21 @@ from typing import Callable, Literal
 
 from confluent_kafka import Message
 from gcn_kafka import Consumer
-from gcn_parser import Notice
 from gcn_parser.fermi import parse_fermi_gbm_alert
 from gcn_parser.fermi import parse_fermi_gbm_fin_pos
 from gcn_parser.fermi import parse_fermi_gbm_flt_pos
 from gcn_parser.fermi import parse_fermi_gbm_gnd_pos
+from gcn_parser.svom import is_svom_retraction
+from gcn_parser.svom import parse_svom_eclairs
+from gcn_parser.svom import parse_svom_grm_trigger
+from gcn_parser.svom import parse_svom_mxt
+from gcn_parser.svom import parse_svom_retraction
+from gcn_parser.svom import SvomRetraction
 from psycopg import Connection
 
-from .db import init_db_conn
 from .db import get_or_create_event
-from .db import get_or_create_milestone
-from .db import insert_artifact
+from .db import init_db_conn
+from .db import insert_notice
 from .db import Localization
 from .utils import is_tz_aware
 
@@ -50,11 +54,46 @@ class Topic:
     parser: Callable
 
 
+@dataclass(frozen=True)
+class Notice:
+    """A normalized GCN notice."""
+
+    ivorn: str
+    burst_id: str
+    localization: Localization | None
+    published_at: datetime
+    burst_datetime: datetime
+    mission: str
+    instrument: str
+    kind: Literal["alert", "localization", "retraction"]
+
+
+def parse_svom_grm_topic(value: bytes):
+    if is_svom_retraction(value):
+        return parse_svom_retraction(value)
+    return parse_svom_grm_trigger(value)
+
+
+def parse_svom_eclairs_topic(value: bytes):
+    if is_svom_retraction(value):
+        return parse_svom_retraction(value)
+    return parse_svom_eclairs(value)
+
+
+def parse_svom_mxt_topic(value: bytes):
+    if is_svom_retraction(value):
+        return parse_svom_retraction(value)
+    return parse_svom_mxt(value)
+
+
 TOPICS = [
     Topic("gcn.classic.voevent.FERMI_GBM_ALERT", "xml", parse_fermi_gbm_alert),
     Topic("gcn.classic.voevent.FERMI_GBM_FIN_POS", "xml", parse_fermi_gbm_fin_pos),
     Topic("gcn.classic.voevent.FERMI_GBM_FLT_POS", "xml", parse_fermi_gbm_flt_pos),
     Topic("gcn.classic.voevent.FERMI_GBM_GND_POS", "xml", parse_fermi_gbm_gnd_pos),
+    Topic("gcn.notices.svom.voevent.eclairs", "xml", parse_svom_eclairs_topic),
+    Topic("gcn.notices.svom.voevent.grm", "xml", parse_svom_grm_topic),
+    Topic("gcn.notices.svom.voevent.mxt", "xml", parse_svom_mxt_topic),
 ]
 
 SUFFIXES = {t.topic: t.suffix for t in TOPICS}
@@ -112,34 +151,79 @@ def write_message(
     return filepath
 
 
-def notice_localization(subtype: str, notice: Notice) -> Localization | None:
-    """Extract localization coordinates from a parsed notice.
+def notice_localization(ra: float | None, dec: float | None, err_radius: float | None) -> Localization | None:
+    """Normalize parsed notice coordinates into a localization struct."""
+    if ra is None or dec is None or err_radius is None or err_radius <= 0:
+        return None
+    return Localization(ra=ra, dec=dec, err_radius=err_radius)
 
-    Args:
-        subtype: GCN topic name for the notice.
-        notice: Parsed GCN notice.
 
-    Returns:
-        A Localization for position notices, else None for alert notices.
+def parse_message(message: Message) -> Notice:
+    """Parse a Kafka message into a db-normalized notice shape."""
+    topic = message.topic()
+    parsed_notice = PARSERS[topic](message.value())
 
-    Raises:
-        ValueError: If the notice subtype is unsupported.
-    """
-    match subtype:
+    match topic:
         case "gcn.classic.voevent.FERMI_GBM_ALERT":
-            return None
+            return Notice(
+                ivorn=parsed_notice.ivorn,
+                burst_id=str(parsed_notice.trig_id),
+                localization=None,
+                published_at=parsed_notice.alert_datetime,
+                burst_datetime=parsed_notice.burst_datetime,
+                mission="Fermi",
+                instrument="GBM",
+                kind="alert",
+            )
         case (
             "gcn.classic.voevent.FERMI_GBM_FIN_POS"
             | "gcn.classic.voevent.FERMI_GBM_FLT_POS"
             | "gcn.classic.voevent.FERMI_GBM_GND_POS"
         ):
-            return Localization(
-                ra=notice.ra,
-                dec=notice.dec,
-                err_radius=notice.error_radius,
+            localization = notice_localization(
+                parsed_notice.ra,
+                parsed_notice.dec,
+                parsed_notice.error_radius,
+            )
+            return Notice(
+                ivorn=parsed_notice.ivorn,
+                burst_id=str(parsed_notice.trig_id),
+                localization=localization,
+                published_at=parsed_notice.alert_datetime,
+                burst_datetime=parsed_notice.burst_datetime,
+                mission="Fermi",
+                instrument="GBM",
+                kind="localization" if localization is not None else "alert",
+            )
+        case (
+            "gcn.notices.svom.voevent.eclairs"
+            | "gcn.notices.svom.voevent.grm"
+            | "gcn.notices.svom.voevent.mxt"
+        ):
+            localization = None
+            kind: Literal["alert", "localization", "retraction"]
+            if isinstance(parsed_notice, SvomRetraction):
+                kind = "retraction"
+            else:
+                localization = notice_localization(
+                    parsed_notice.ra,
+                    parsed_notice.dec,
+                    parsed_notice.error_radius,
+                )
+                kind = "localization" if localization is not None else "alert"
+
+            return Notice(
+                ivorn=parsed_notice.ivorn,
+                burst_id=parsed_notice.burst_id,
+                localization=localization,
+                published_at=parsed_notice.alert_datetime,
+                burst_datetime=parsed_notice.burst_datetime,
+                mission="SVOM",
+                instrument=parsed_notice.instrument,
+                kind=kind,
             )
         case _:
-            raise ValueError(f"Unsupported milestone subtype: {subtype}")
+            raise ValueError(f"Unsupported message topic: {topic}")
 
 
 def schedule_ztf_conesearch(
@@ -155,8 +239,8 @@ def schedule_ztf_conesearch(
 
     The campaign covers ``[burst_datetime, burst_datetime + total * period)``
     with ``total`` windows, each lasting ``period``. Jobs are scheduled after
-    each window by ``offset`` to allow broker ingestion and distribution. The
-    stable ``scheduled_at`` cutoff and initial ``run_after`` eligibility are
+    each window by ``offset`` to allow broker ingestion and distribution.
+    The stable ``scheduled_at`` cutoff and initial ``run_after`` eligibility are
     identical at creation; retries only move ``run_after``.
 
     Args:
@@ -218,30 +302,32 @@ def insert_message(
     filepath: Path,
     db_conn: Connection,
 ):
-    """Record a message, derived milestone, artifact, and jobs atomically.
+    """Record one Kafka message atomically.
 
     Args:
         message: Kafka message containing a supported GCN notice.
         filepath: Path where the raw message was persisted.
         db_conn: Database connection used for the transaction.
     """
-    subtype = message.topic()
-    notice = PARSERS[subtype](message.value())
-    localization = notice_localization(subtype, notice)
-    # TODO: mission name is hardcoded here, remember to change this once we add support for other missions
-    mission, instrument = "Fermi", "GBM"
-    event_external_id = f"{mission}.{instrument}:{notice.trig_id}"
-    artifact_uri = filepath.resolve().as_uri()
+    topic = message.topic()
+    notice = parse_message(message)
+    localization = notice.localization
+    # we annotate the mission for disambiguation: events are not mission-specific
+    event_external_id = f"{notice.mission}:{notice.burst_id}"
+    raw_uri = filepath.resolve().as_uri()
 
     try:
         with db_conn.cursor() as cursor:
             event_info = get_or_create_event(
                 cursor,
                 external_id=event_external_id,
-                mission=mission,
-                instrument=instrument,
             )
-            if event_info.is_new:
+            # we check against retraction because, in general, there is no guarantee
+            # that a message on a new event will be actual first alert. we could be
+            # starting mid-sequence because we missed alerts, or the actual sequence
+            # didn't start with an alert. this means we could be starting a sequence
+            # off a retraction.
+            if event_info.is_new and notice.kind != "retraction":
                 schedule_ztf_conesearch(
                     cursor,
                     event_id=event_info.event_id,
@@ -251,24 +337,20 @@ def insert_message(
                     total=DEFAULT_CONESEARCH_TOTAL,
                     max_retry=DEFAULT_CONESEARCH_MAXRETRY,
                 )
-            milestone_id = get_or_create_milestone(
+            insert_notice(
                 cursor,
                 event_id=event_info.event_id,
-                external_id=notice.ivorn,
-                subtype=subtype,
-                published_at=notice.alert_datetime,
-                subject_time_start=notice.burst_datetime,
-                subject_time_end=notice.burst_datetime,
-                milestone_type="notice",
+                ivorn=notice.ivorn,
+                topic=topic,
+                mission=notice.mission,
+                instrument=notice.instrument,
+                kind=notice.kind,
+                published_at=notice.published_at,
+                burst_datetime=notice.burst_datetime,
+                raw_uri=raw_uri,
                 ra=localization.ra if localization is not None else None,
                 dec=localization.dec if localization is not None else None,
                 err_radius=localization.err_radius if localization is not None else None,
-            )
-            insert_artifact(
-                cursor,
-                milestone_id=milestone_id,
-                uri=artifact_uri,
-                artifact_type="gcn.voevent",
             )
 
         db_conn.commit()
@@ -282,10 +364,10 @@ def main(
     group_id: str | None = None,
     offset: Literal["earliest", "latest"] = "earliest",
 ):
-    """Consume GCN notices and store raw messages plus derived records.
+    """Consumes GCN notices, record them on disk and db and schedule follow-up jobs.
 
     Args:
-        output_directory: Directory where raw Kafka messages should be written.
+        output_directory: Directory for raw notices.
         group_id: Optional Kafka consumer group ID.
         offset: Initial offset policy when no committed offset exists.
     """
@@ -317,7 +399,7 @@ def main(
                         "topic": message.topic(),
                         "partition": message.partition(),
                         "offset": message.offset(),
-                        "artifact_path": filepath,
+                        "notice_path": filepath,
                     },
                 )
     finally:

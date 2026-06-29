@@ -1,8 +1,10 @@
 from datetime import timedelta
 
 from conftest import alert_only_fixture
+from conftest import event_external_id
 from conftest import insert_fixture
 from conftest import localization_fixtures
+from conftest import normalized_notice
 from conftest import parsed_notice
 
 from starhunt.db import find_best_localization
@@ -14,9 +16,7 @@ def test_get_or_create_event_returns_new_event_info(db_conn):
     with db_conn.cursor() as cur:
         event_info = get_or_create_event(
             cur,
-            external_id="Fermi.GBM:test-new-event",
-            mission="Fermi",
-            instrument="GBM",
+            external_id="Fermi:test-new-event",
         )
 
     assert event_info.is_new is True
@@ -27,15 +27,11 @@ def test_get_or_create_event_returns_existing_event_info(db_conn):
     with db_conn.cursor() as cur:
         first = get_or_create_event(
             cur,
-            external_id="Fermi.GBM:test-existing-event",
-            mission="Fermi",
-            instrument="GBM",
+            external_id="Fermi:test-existing-event",
         )
         second = get_or_create_event(
             cur,
-            external_id="Fermi.GBM:test-existing-event",
-            mission="Fermi",
-            instrument="GBM",
+            external_id="Fermi:test-existing-event",
         )
 
     assert first.is_new is True
@@ -45,19 +41,19 @@ def test_get_or_create_event_returns_existing_event_info(db_conn):
 
 def test_find_best_localization_returns_none_without_localization(db_conn):
     path = alert_only_fixture()
-    notice = parsed_notice(path)
+    notice = normalized_notice(path)
     insert_fixture(db_conn, path)
 
     with db_conn.cursor() as cur:
         cur.execute(
             "SELECT id FROM events WHERE external_id = %s",
-            (f"Fermi.GBM:{notice.trig_id}",),
+            (event_external_id(path),),
         )
         event_id = cur.fetchone()[0]
         localization = find_best_localization(
             cur,
             event_id=event_id,
-            cutoff_at=notice.alert_datetime + timedelta(hours=1),
+            cutoff_at=notice.published_at + timedelta(hours=1),
         )
 
     assert localization is None
@@ -70,17 +66,18 @@ def test_find_best_localization_returns_latest_usable_localization(db_conn):
 
     latest_notice = parsed_notice(paths[1])
     earlier_notice = parsed_notice(paths[0])
+    latest_normalized = normalized_notice(paths[1])
 
     with db_conn.cursor() as cur:
         cur.execute(
             "SELECT id FROM events WHERE external_id = %s",
-            (f"Fermi.GBM:{latest_notice.trig_id}",),
+            (event_external_id(paths[1]),),
         )
         event_id = cur.fetchone()[0]
         localization = find_best_localization(
             cur,
             event_id=event_id,
-            cutoff_at=latest_notice.alert_datetime + timedelta(seconds=1),
+            cutoff_at=latest_normalized.published_at + timedelta(seconds=1),
         )
 
     assert localization == Localization(
@@ -101,22 +98,83 @@ def test_find_best_localization_ignores_future_publications(db_conn):
         insert_fixture(db_conn, path)
 
     earlier_notice = parsed_notice(paths[0])
-    later_notice = parsed_notice(paths[1])
+    later_normalized = normalized_notice(paths[1])
 
     with db_conn.cursor() as cur:
         cur.execute(
             "SELECT id FROM events WHERE external_id = %s",
-            (f"Fermi.GBM:{earlier_notice.trig_id}",),
+            (event_external_id(paths[0]),),
         )
         event_id = cur.fetchone()[0]
         localization = find_best_localization(
             cur,
             event_id=event_id,
-            cutoff_at=later_notice.alert_datetime - timedelta(seconds=1),
+            cutoff_at=later_normalized.published_at - timedelta(seconds=1),
         )
 
     assert localization == Localization(
         ra=earlier_notice.ra,
         dec=earlier_notice.dec,
         err_radius=earlier_notice.error_radius,
+    )
+
+
+def test_find_best_localization_ignores_conesearch_coordinates(db_conn):
+    path = localization_fixtures(1)[0]
+    notice = parsed_notice(path)
+    normalized = normalized_notice(path)
+    insert_fixture(db_conn, path)
+
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM events WHERE external_id = %s",
+            (event_external_id(path),),
+        )
+        event_id = cur.fetchone()[0]
+        cur.execute(
+            """
+            SELECT id, subject_time_start, subject_time_end
+            FROM jobs
+            WHERE event_id = %s
+            ORDER BY subject_time_start
+            LIMIT 1
+            """,
+            (event_id,),
+        )
+        job_id, subject_time_start, subject_time_end = cur.fetchone()
+        cur.execute(
+            """
+            INSERT INTO conesearches (
+                event_id,
+                job_id,
+                broker,
+                survey,
+                subject_time_start,
+                subject_time_end,
+                queried_at,
+                ra,
+                dec,
+                radius_arcsec,
+                alert_count
+            )
+            VALUES (%s, %s, 'fink', 'ztf', %s, %s, %s, 1, 2, 3, 0)
+            """,
+            (
+                event_id,
+                job_id,
+                subject_time_start,
+                subject_time_end,
+                normalized.published_at + timedelta(hours=1),
+            ),
+        )
+        localization = find_best_localization(
+            cur,
+            event_id=event_id,
+            cutoff_at=normalized.published_at + timedelta(hours=2),
+        )
+
+    assert localization == Localization(
+        ra=notice.ra,
+        dec=notice.dec,
+        err_radius=notice.error_radius,
     )

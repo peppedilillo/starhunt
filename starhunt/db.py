@@ -9,7 +9,7 @@ from psycopg import Connection
 
 @dataclass(frozen=True)
 class EventInfo:
-    """Information about an event lookup or insert.
+    """Result of an event lookup or insert.
 
     Attributes:
         event_id: Event primary key.
@@ -22,7 +22,7 @@ class EventInfo:
 
 @dataclass(frozen=True)
 class Localization:
-    """Sky localization coordinates for an event.
+    """Sky position and error radius.
 
     Attributes:
         ra: Right ascension in degrees.
@@ -37,7 +37,7 @@ class Localization:
 
 @dataclass(frozen=True)
 class JobInfo:
-    """Database job selected for worker execution.
+    """Claimed job metadata.
 
     Attributes:
         job_id: Job primary key.
@@ -62,12 +62,8 @@ class JobInfo:
     max_attempts: int
 
 
-MilestoneID = int
-ArtifactID = int
-
-
 def init_db_conn() -> Connection:
-    """Create DB connection from environment.
+    """Create a database connection from environment variables.
 
     Returns:
         A psycopg database connection.
@@ -81,26 +77,25 @@ def init_db_conn() -> Connection:
     )
 
 
-def get_or_create_event(cursor, external_id: str, mission: str, instrument: str) -> EventInfo:
+def get_or_create_event(cursor, external_id: str) -> EventInfo:
     """Return an event id, inserting the event when absent.
 
     Args:
         cursor: Database cursor.
-        external_id: Stable external event identifier.
-        mission: Mission that detected the event.
-        instrument: Instrument that detected the event.
+        external_id: Stable mission-qualified event id. The mission tag only
+            disambiguates ids; mission metadata lives on notices.
 
     Returns:
         Event information including whether a new row was inserted.
     """
     cursor.execute(
         """
-        INSERT INTO events (external_id, mission, instrument)
-        VALUES (%s, %s, %s)
+        INSERT INTO events (external_id)
+        VALUES (%s)
         ON CONFLICT (external_id) DO NOTHING
         RETURNING id
         """,
-        (external_id, mission, instrument),
+        (external_id,),
     )
     row = cursor.fetchone()
     if row is not None:
@@ -115,66 +110,75 @@ def get_or_create_event(cursor, external_id: str, mission: str, instrument: str)
     return EventInfo(event_id=cursor.fetchone()[0], is_new=False)
 
 
-def get_or_create_milestone(
+def insert_notice(
     cursor,
+    *,
     event_id: int,
-    external_id: str,
-    subtype: str,
+    ivorn: str,
+    topic: str,
+    mission: str,
+    instrument: str,
+    kind: str,
     published_at: datetime,
-    subject_time_start: datetime,
-    subject_time_end: datetime,
-    milestone_type: str,
+    burst_datetime: datetime,
+    raw_uri: str,
     ra: float | None = None,
     dec: float | None = None,
     err_radius: float | None = None,
-) -> MilestoneID:
-    """Return a milestone id, inserting the milestone when absent.
+) -> int:
+    """Return a notice id, inserting the notice if needed.
 
     Args:
         cursor: Database cursor.
-        event_id: Event primary key for the milestone.
-        external_id: Stable external milestone identifier.
-        subtype: Milestone subtype.
-        published_at: Time when the milestone was published.
-        subject_time_start: Inclusive lower bound of the subject time window.
-        subject_time_end: Exclusive upper bound of the subject time window.
-        milestone_type: High-level milestone type.
+        event_id: Event primary key.
+        ivorn: Stable notice identifier.
+        topic: Kafka topic carrying the notice.
+        mission: Mission that produced the notice.
+        instrument: Instrument that produced the notice.
+        kind: Normalized notice kind.
+        published_at: Time when the notice was published.
+        burst_datetime: Event burst time reported by the notice.
+        raw_uri: URI of the raw notice file.
         ra: Optional right ascension in degrees.
         dec: Optional declination in degrees.
         err_radius: Optional error radius in degrees.
 
     Returns:
-        Milestone primary key.
+        Notice primary key.
     """
     cursor.execute(
         """
-        INSERT INTO milestones (
+        INSERT INTO notices (
             event_id,
-            external_id,
-            milestone_type,
-            milestone_subtype,
+            ivorn,
+            topic,
+            mission,
+            instrument,
+            kind,
             published_at,
-            subject_time_start,
-            subject_time_end,
+            burst_datetime,
             ra,
             dec,
-            err_radius
+            err_radius,
+            raw_uri
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (external_id) DO NOTHING
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (ivorn) DO NOTHING
         RETURNING id
         """,
         (
             event_id,
-            external_id,
-            milestone_type,
-            subtype,
+            ivorn,
+            topic,
+            mission,
+            instrument,
+            kind,
             published_at,
-            subject_time_start,
-            subject_time_end,
+            burst_datetime,
             ra,
             dec,
             err_radius,
+            raw_uri,
         ),
     )
     row = cursor.fetchone()
@@ -183,39 +187,83 @@ def get_or_create_milestone(
 
     cursor.execute(
         """
-        SELECT id FROM milestones WHERE external_id = %s
+        SELECT id FROM notices WHERE ivorn = %s
         """,
-        (external_id,),
+        (ivorn,),
     )
     return cursor.fetchone()[0]
 
 
-def insert_artifact(
+def insert_conesearch(
     cursor,
-    milestone_id: int,
-    uri: str,
-    artifact_type: str,
-) -> ArtifactID:
-    """Record an artifact URI for a milestone and return its id.
+    *,
+    event_id: int,
+    job_id: int,
+    broker: str,
+    survey: str,
+    subject_time_start: datetime,
+    subject_time_end: datetime,
+    queried_at: datetime,
+    ra: float,
+    dec: float,
+    radius_arcsec: float,
+    alert_count: int,
+    result_uri: str | None,
+) -> int:
+    """Return a conesearch id, inserting the conesearch if needed.
 
     Args:
         cursor: Database cursor.
-        milestone_id: Milestone primary key for the artifact.
-        uri: Artifact URI.
-        artifact_type: Type of artifact being recorded.
+        event_id: Event primary key.
+        job_id: Job primary key that produced the query.
+        broker: Broker queried.
+        survey: Survey queried through the broker.
+        subject_time_start: Inclusive lower bound of the query time window.
+        subject_time_end: Exclusive upper bound of the query time window.
+        queried_at: Time the query was recorded.
+        ra: Right ascension queried in degrees.
+        dec: Declination queried in degrees.
+        radius_arcsec: Query radius in arcseconds.
+        alert_count: Number of returned alerts.
+        result_uri: URI of the raw result file for non-empty results.
 
     Returns:
-        Artifact primary key.
+        Conesearch primary key.
     """
     cursor.execute(
         """
-        INSERT INTO artifacts (milestone_id, artifact_type, uri)
-        VALUES (%s, %s, %s)
-        ON CONFLICT (milestone_id, artifact_type, uri)
-        DO NOTHING
+        INSERT INTO conesearches (
+            event_id,
+            job_id,
+            broker,
+            survey,
+            subject_time_start,
+            subject_time_end,
+            queried_at,
+            ra,
+            dec,
+            radius_arcsec,
+            alert_count,
+            result_uri
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (job_id) DO NOTHING
         RETURNING id
         """,
-        (milestone_id, artifact_type, uri),
+        (
+            event_id,
+            job_id,
+            broker,
+            survey,
+            subject_time_start,
+            subject_time_end,
+            queried_at,
+            ra,
+            dec,
+            radius_arcsec,
+            alert_count,
+            result_uri,
+        ),
     )
     row = cursor.fetchone()
     if row is not None:
@@ -224,12 +272,10 @@ def insert_artifact(
     cursor.execute(
         """
         SELECT id
-        FROM artifacts
-        WHERE milestone_id = %s
-            AND artifact_type = %s
-            AND uri = %s
+        FROM conesearches
+        WHERE job_id = %s
         """,
-        (milestone_id, artifact_type, uri),
+        (job_id,),
     )
     return cursor.fetchone()[0]
 
@@ -238,10 +284,10 @@ def pick_job(
     cursor,
     worker_id: str,
 ) -> JobInfo | None:
-    """Claim the next worker-eligible job.
+    """Claim the next runnable job.
 
-    ``run_after`` controls queue eligibility and may move during retries.
-    ``scheduled_at`` is returned unchanged for provenance/localization cutoff.
+    ``run_after`` controls queue eligibility. ``scheduled_at`` is the stable
+    localization cutoff.
 
     Args:
         cursor: Database cursor.
@@ -292,11 +338,9 @@ def claim_expired_jobs(
     *,
     retry_delay: timedelta,
 ) -> int:
-    """Reclaim running jobs whose worker lease has expired.
+    """Reclaim jobs whose worker lease expired.
 
-    Expired jobs are handled like ordinary execution failures. Retryable jobs
-    move ``run_after`` forward; ``scheduled_at`` remains the stable science
-    cutoff used by localization selection.
+    Retryable jobs move ``run_after`` forward. ``scheduled_at`` is unchanged.
 
     Args:
         cursor: Database cursor.
@@ -348,7 +392,7 @@ def claim_expired_jobs(
 
 
 def find_best_localization(cursor, event_id: int, cutoff_at: datetime) -> Localization | None:
-    """Find the latest localization published at or before ``cutoff_at``.
+    """Find the latest notice localization at or before ``cutoff_at``.
 
     Args:
         cursor: Database cursor.
@@ -364,13 +408,14 @@ def find_best_localization(cursor, event_id: int, cutoff_at: datetime) -> Locali
             ra,
             dec,
             err_radius
-        FROM milestones
-        WHERE milestones.event_id = %s
-            AND milestones.published_at <= %s
-            AND milestones.ra IS NOT NULL
-            AND milestones.dec IS NOT NULL
-            AND milestones.err_radius IS NOT NULL
-        ORDER BY milestones.published_at DESC, milestones.id DESC
+        FROM notices
+        WHERE notices.event_id = %s
+            AND notices.kind = 'localization'
+            AND notices.published_at <= %s
+            AND notices.ra IS NOT NULL
+            AND notices.dec IS NOT NULL
+            AND notices.err_radius IS NOT NULL
+        ORDER BY notices.published_at DESC, notices.id DESC
         LIMIT 1
         """,
         (event_id, cutoff_at),
@@ -381,13 +426,12 @@ def find_best_localization(cursor, event_id: int, cutoff_at: datetime) -> Locali
     return Localization(*row)
 
 
-def mark_job_succeeded(cursor, job_id: int, artifact_id: int | None):
+def mark_job_succeeded(cursor, job_id: int):
     """Mark a job as succeeded.
 
     Args:
         cursor: Database cursor.
         job_id: Job primary key.
-        artifact_id: Optional artifact primary key produced by the job.
     """
     cursor.execute(
         """
@@ -395,11 +439,10 @@ def mark_job_succeeded(cursor, job_id: int, artifact_id: int | None):
         SET status = 'succeeded',
             completed_at = now(),
             lease_until = NULL,
-            artifact_id = %s,
             last_error = NULL
         WHERE id = %s
         """,
-        (artifact_id, job_id),
+        (job_id,),
     )
 
 
@@ -433,8 +476,7 @@ def mark_job_failed(
 ):
     """Mark a job as failed, or dead if attempts are exhausted.
 
-    Retry delay changes only ``run_after``. ``scheduled_at`` stays fixed as the
-    localization cutoff for this job window.
+    Retry delay changes only ``run_after``, not ``scheduled_at``.
 
     Args:
         cursor: Database cursor.

@@ -1,5 +1,5 @@
-from datetime import timedelta
 from datetime import datetime
+from datetime import timedelta
 from datetime import timezone
 from io import StringIO
 import json
@@ -54,19 +54,19 @@ def test_renders_selected_context_in_stable_order():
             record(
                 context={
                     "max_attempts": 3,
-                    "artifact_path": "/data/private/result.json",
+                    "notice_path": "/data/private/notice.xml",
                     "event_id": 23,
                     "attempt_count": 2,
                     "job_id": 17,
-                    "artifact_id": 31,
+                    "conesearch_id": 31,
                     "unknown": "omitted",
                 }
             ),
         ).rstrip()
     )
 
-    assert "job_id=17 event_id=23 artifact_id=31 attempt=2/3" in rendered.plain
-    assert "artifact_path" not in rendered.plain
+    assert "job_id=17 event_id=23 conesearch_id=31 attempt=2/3" in rendered.plain
+    assert "notice_path" not in rendered.plain
     assert "unknown" not in rendered.plain
 
 
@@ -84,9 +84,10 @@ def test_colors_warning_message_and_context_yellow():
 
     assert "[WARNING] Kafka message error" in rendered.plain
     assert rendered.plain.startswith("consumer-1  | ")
-    assert ("yellow", "2026-06-24T12:30:00.123Z [WARNING] Kafka message error  topic=gcn.test error=broker unavailable") in styles_for(
-        rendered
-    )
+    assert (
+        "yellow",
+        "2026-06-24T12:30:00.123Z [WARNING] Kafka message error  topic=gcn.test error=broker unavailable",
+    ) in styles_for(rendered)
 
 
 def test_shows_explicit_debug_level():
@@ -136,8 +137,7 @@ def test_dims_non_json_payload_without_styling_docker_prefix():
 
 def test_streams_lines_in_input_order_without_terminal_colors():
     source = StringIO(
-        compose_line("consumer-1", record(message="First"))
-        + compose_line("worker-1", record(message="Second"))
+        compose_line("consumer-1", record(message="First")) + compose_line("worker-1", record(message="Second"))
     )
     output = StringIO()
     console = Console(
@@ -239,10 +239,13 @@ def test_last_filter_hides_unstructured_and_invalid_timestamps():
 
     assert render_line("postgres-1  | checkpoint complete", cutoff=cutoff) is None
     assert render_line("plain startup failure", cutoff=cutoff) is None
-    assert render_line(
-        compose_line("worker-1", record(timestamp="not-a-date")),
-        cutoff=cutoff,
-    ) is None
+    assert (
+        render_line(
+            compose_line("worker-1", record(timestamp="not-a-date")),
+            cutoff=cutoff,
+        )
+        is None
+    )
 
 
 def test_last_and_level_filters_are_combined():
