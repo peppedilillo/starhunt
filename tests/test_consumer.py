@@ -57,13 +57,30 @@ def notice_row_by_ivorn(conn, ivorn: str):
                 topic,
                 mission,
                 instrument,
-                kind,
+                is_retraction,
                 ra,
                 dec,
                 err_radius,
                 raw_uri
             FROM notices
             WHERE ivorn = %s
+            """,
+            (ivorn,),
+        )
+        return cur.fetchone()
+
+
+def retraction_state_by_ivorn(conn, ivorn: str):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                target.is_retraction,
+                retractor.ivorn
+            FROM notices AS target
+            LEFT JOIN notices AS retractor
+                ON retractor.id = target.retracted_by
+            WHERE target.ivorn = %s
             """,
             (ivorn,),
         )
@@ -277,7 +294,7 @@ def test_can_insert_all_supported_fixtures(db_conn):
         if event_id in created_events:
             continue
         created_events.add(event_id)
-        if notice.kind != "retraction":
+        if not notice.retractions:
             scheduled_events.add(event_id)
 
     for path in paths:
@@ -330,7 +347,7 @@ def test_alert_notice_stores_null_localization(db_conn):
         fixture_topic(path),
         "Fermi",
         "GBM",
-        "alert",
+        False,
         None,
         None,
         None,
@@ -349,7 +366,7 @@ def test_localized_notice_stores_coordinates(db_conn):
         fixture_topic(path),
         "Fermi",
         "GBM",
-        "localization",
+        False,
         notice.ra,
         notice.dec,
         notice.error_radius,
@@ -358,14 +375,41 @@ def test_localized_notice_stores_coordinates(db_conn):
 
 
 def test_parse_message_normalizes_svom_retraction():
-    path = next(path for path in fixture_paths() if normalized_notice(path).kind == "retraction")
+    path = next(path for path in fixture_paths() if normalized_notice(path).retractions)
     notice = normalized_notice(path)
+    parsed = parsed_notice(path)
 
     assert notice.mission == "SVOM"
-    assert notice.kind == "retraction"
     assert notice.localization is None
-    assert notice.ivorn == parsed_notice(path).ivorn
-    assert notice.burst_id == parsed_notice(path).burst_id
+    assert notice.ivorn == parsed.ivorn
+    assert notice.burst_id == parsed.burst_id
+    assert notice.retractions == parsed.retractions
+
+
+def test_svom_retraction_marks_local_cited_notice(db_conn):
+    trigger = next(
+        path
+        for path in fixture_paths()
+        if normalized_notice(path).ivorn == "ivo://org.svom/fsc#sb26043009_grm-trigger"
+    )
+    retraction = next(
+        path
+        for path in fixture_paths()
+        if normalized_notice(path).ivorn == "ivo://org.svom/fsc#sb26043009_retraction"
+    )
+
+    insert_fixture(db_conn, trigger)
+    insert_fixture(db_conn, retraction)
+
+    assert retraction_state_by_ivorn(db_conn, "ivo://org.svom/fsc#sb26043009_grm-trigger") == (
+        False,
+        "ivo://org.svom/fsc#sb26043009_retraction",
+    )
+    assert retraction_state_by_ivorn(db_conn, "ivo://org.svom/fsc#sb26043009_retraction") == (
+        True,
+        None,
+    )
+    assert table_counts(db_conn) == (1, 2, 0, DEFAULT_CONESEARCH_TOTAL)
 
 
 def test_svom_notices_from_different_instruments_share_event(db_conn):
@@ -408,7 +452,7 @@ def test_svom_grm_negative_radius_stores_null_localization(db_conn):
         fixture_topic(path),
         "SVOM",
         "GRM",
-        "alert",
+        False,
         None,
         None,
         None,

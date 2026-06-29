@@ -13,21 +13,27 @@ CREATE TABLE notices (
     topic text NOT NULL,
     mission text NOT NULL,
     instrument text NOT NULL,
-    kind text NOT NULL,
     published_at timestamptz NOT NULL,
     burst_datetime timestamptz NOT NULL,
     ra double precision,
     dec double precision,
     err_radius double precision,
     raw_uri text NOT NULL,
+    is_retraction boolean NOT NULL DEFAULT false,
+    -- retraction notice that locally invalidated this notice; app code ensures is_retraction = true.
+    -- ON DELETE SET NULL makes deleting the retraction undo local retraction state.
+    retracted_by bigint REFERENCES notices(id) ON DELETE SET NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
 
-    CHECK (kind IN ('alert', 'localization', 'retraction')),
     -- all or nothing completeness
     CHECK (num_nonnulls(ra, dec, err_radius) IN (0, 3)),
     CHECK (ra IS NULL OR (ra >= 0 AND ra <= 360)),
     CHECK (dec IS NULL OR (dec >= -90 AND dec <= 90)),
-    CHECK (err_radius IS NULL OR err_radius > 0)
+    CHECK (err_radius IS NULL OR err_radius > 0),
+    -- a notice cannot retract itself.
+    CHECK (retracted_by IS NULL OR retracted_by <> id),
+    -- retraction notices cannot be retracted until real examples require it.
+    CHECK (NOT is_retraction OR retracted_by IS NULL)
 );
 
 CREATE TABLE jobs (

@@ -1,4 +1,6 @@
+from datetime import datetime
 from datetime import timedelta
+from datetime import timezone
 
 from conftest import alert_only_fixture
 from conftest import event_external_id
@@ -9,7 +11,9 @@ from conftest import parsed_notice
 
 from starhunt.db import find_best_localization
 from starhunt.db import get_or_create_event
+from starhunt.db import insert_notice
 from starhunt.db import Localization
+from starhunt.db import mark_retracted_notices
 
 
 def test_get_or_create_event_returns_new_event_info(db_conn):
@@ -178,3 +182,95 @@ def test_find_best_localization_ignores_conesearch_coordinates(db_conn):
         dec=notice.dec,
         err_radius=notice.error_radius,
     )
+
+
+def test_find_best_localization_ignores_localization_retracted_before_cutoff(db_conn):
+    published_at = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+    retracted_at = published_at + timedelta(minutes=10)
+    cutoff_at = published_at + timedelta(minutes=20)
+
+    with db_conn.cursor() as cur:
+        event = get_or_create_event(cur, external_id="SVOM:retracted-before-cutoff")
+        insert_notice(
+            cur,
+            event_id=event.event_id,
+            ivorn="ivo://org.svom/fsc#retracted-before-cutoff_slewing",
+            topic="gcn.notices.svom.voevent.eclairs",
+            mission="SVOM",
+            instrument="ECLAIRs",
+            is_retraction=False,
+            published_at=published_at,
+            burst_datetime=published_at,
+            raw_uri="file:///tmp/retracted-before-cutoff_slewing.xml",
+            ra=1,
+            dec=2,
+            err_radius=0.1,
+        )
+        retraction_id = insert_notice(
+            cur,
+            event_id=event.event_id,
+            ivorn="ivo://org.svom/fsc#retracted-before-cutoff_retraction",
+            topic="gcn.notices.svom.voevent.eclairs",
+            mission="SVOM",
+            instrument="ECLAIRs",
+            is_retraction=True,
+            published_at=retracted_at,
+            burst_datetime=published_at,
+            raw_uri="file:///tmp/retracted-before-cutoff_retraction.xml",
+        )
+        mark_retracted_notices(
+            cur,
+            event_id=event.event_id,
+            retraction_notice_id=retraction_id,
+            target_ivorns=("ivo://org.svom/fsc#retracted-before-cutoff_slewing",),
+        )
+
+        localization = find_best_localization(cur, event.event_id, cutoff_at=cutoff_at)
+
+    assert localization is None
+
+
+def test_find_best_localization_keeps_localization_retracted_after_cutoff(db_conn):
+    published_at = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+    cutoff_at = published_at + timedelta(minutes=10)
+    retracted_at = published_at + timedelta(minutes=20)
+
+    with db_conn.cursor() as cur:
+        event = get_or_create_event(cur, external_id="SVOM:retracted-after-cutoff")
+        insert_notice(
+            cur,
+            event_id=event.event_id,
+            ivorn="ivo://org.svom/fsc#retracted-after-cutoff_slewing",
+            topic="gcn.notices.svom.voevent.eclairs",
+            mission="SVOM",
+            instrument="ECLAIRs",
+            is_retraction=False,
+            published_at=published_at,
+            burst_datetime=published_at,
+            raw_uri="file:///tmp/retracted-after-cutoff_slewing.xml",
+            ra=1,
+            dec=2,
+            err_radius=0.1,
+        )
+        retraction_id = insert_notice(
+            cur,
+            event_id=event.event_id,
+            ivorn="ivo://org.svom/fsc#retracted-after-cutoff_retraction",
+            topic="gcn.notices.svom.voevent.eclairs",
+            mission="SVOM",
+            instrument="ECLAIRs",
+            is_retraction=True,
+            published_at=retracted_at,
+            burst_datetime=published_at,
+            raw_uri="file:///tmp/retracted-after-cutoff_retraction.xml",
+        )
+        mark_retracted_notices(
+            cur,
+            event_id=event.event_id,
+            retraction_notice_id=retraction_id,
+            target_ivorns=("ivo://org.svom/fsc#retracted-after-cutoff_slewing",),
+        )
+
+        localization = find_best_localization(cur, event.event_id, cutoff_at=cutoff_at)
+
+    assert localization == Localization(ra=1, dec=2, err_radius=0.1)

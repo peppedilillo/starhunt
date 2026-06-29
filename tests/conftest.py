@@ -103,7 +103,7 @@ def event_fixture_groups():
 def alert_only_fixture():
     for paths in event_fixture_groups().values():
         notices = [normalized_notice(path) for path in paths]
-        if all(notice.kind == "alert" for notice in notices):
+        if all(notice.localization is None and not notice.retractions for notice in notices):
             return paths[0]
     raise AssertionError("Expected at least one alert-only fixture.")
 

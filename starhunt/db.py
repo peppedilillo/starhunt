@@ -118,7 +118,7 @@ def insert_notice(
     topic: str,
     mission: str,
     instrument: str,
-    kind: str,
+    is_retraction: bool,
     published_at: datetime,
     burst_datetime: datetime,
     raw_uri: str,
@@ -135,7 +135,7 @@ def insert_notice(
         topic: Kafka topic carrying the notice.
         mission: Mission that produced the notice.
         instrument: Instrument that produced the notice.
-        kind: Normalized notice kind.
+        is_retraction: Whether the notice invalidates earlier cited notices.
         published_at: Time when the notice was published.
         burst_datetime: Event burst time reported by the notice.
         raw_uri: URI of the raw notice file.
@@ -154,7 +154,7 @@ def insert_notice(
             topic,
             mission,
             instrument,
-            kind,
+            is_retraction,
             published_at,
             burst_datetime,
             ra,
@@ -172,7 +172,7 @@ def insert_notice(
             topic,
             mission,
             instrument,
-            kind,
+            is_retraction,
             published_at,
             burst_datetime,
             ra,
@@ -192,6 +192,47 @@ def insert_notice(
         (ivorn,),
     )
     return cursor.fetchone()[0]
+
+
+def mark_retracted_notices(
+    cursor,
+    *,
+    event_id: int,
+    retraction_notice_id: int,
+    target_ivorns: tuple[str, ...],
+) -> int:
+    """Mark local notices cited by a retraction notice as retracted."""
+    if not target_ivorns:
+        return 0
+
+    cursor.execute(
+        """
+        SELECT is_retraction
+        FROM notices
+        WHERE id = %s
+            AND event_id = %s
+        """,
+        (retraction_notice_id, event_id),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise ValueError(f"Unknown retraction notice id: {retraction_notice_id}")
+    if row[0] is not True:
+        raise ValueError("retraction_notice_id must reference a retraction notice")
+
+    cursor.execute(
+        """
+        UPDATE notices
+        SET retracted_by = %s
+        WHERE event_id = %s
+            AND ivorn = ANY(%s)
+            -- retraction-of-retraction is unsupported until examples require it.
+            AND NOT is_retraction
+        RETURNING id
+        """,
+        (retraction_notice_id, event_id, list(target_ivorns)),
+    )
+    return len(cursor.fetchall())
 
 
 def insert_conesearch(
@@ -405,20 +446,25 @@ def find_best_localization(cursor, event_id: int, cutoff_at: datetime) -> Locali
     cursor.execute(
         """
         SELECT
-            ra,
-            dec,
-            err_radius
+            notices.ra,
+            notices.dec,
+            notices.err_radius
         FROM notices
+        LEFT JOIN notices AS retractor
+            ON retractor.id = notices.retracted_by
         WHERE notices.event_id = %s
-            AND notices.kind = 'localization'
             AND notices.published_at <= %s
+            AND (
+                notices.retracted_by IS NULL
+                OR retractor.published_at > %s
+            )
             AND notices.ra IS NOT NULL
             AND notices.dec IS NOT NULL
             AND notices.err_radius IS NOT NULL
         ORDER BY notices.published_at DESC, notices.id DESC
         LIMIT 1
         """,
-        (event_id, cutoff_at),
+        (event_id, cutoff_at, cutoff_at),
     )
     row = cursor.fetchone()
     if row is None:

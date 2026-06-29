@@ -31,6 +31,7 @@ from .db import get_or_create_event
 from .db import init_db_conn
 from .db import insert_notice
 from .db import Localization
+from .db import mark_retracted_notices
 from .utils import is_tz_aware
 
 DEFAULT_CONESEARCH_OFFSET = timedelta(hours=12)
@@ -65,7 +66,7 @@ class Notice:
     burst_datetime: datetime
     mission: str
     instrument: str
-    kind: Literal["alert", "localization", "retraction"]
+    retractions: tuple[str, ...] = ()
 
 
 def parse_svom_grm_topic(value: bytes):
@@ -173,7 +174,6 @@ def parse_message(message: Message) -> Notice:
                 burst_datetime=parsed_notice.burst_datetime,
                 mission="Fermi",
                 instrument="GBM",
-                kind="alert",
             )
         case (
             "gcn.classic.voevent.FERMI_GBM_FIN_POS"
@@ -193,7 +193,6 @@ def parse_message(message: Message) -> Notice:
                 burst_datetime=parsed_notice.burst_datetime,
                 mission="Fermi",
                 instrument="GBM",
-                kind="localization" if localization is not None else "alert",
             )
         case (
             "gcn.notices.svom.voevent.eclairs"
@@ -201,16 +200,15 @@ def parse_message(message: Message) -> Notice:
             | "gcn.notices.svom.voevent.mxt"
         ):
             localization = None
-            kind: Literal["alert", "localization", "retraction"]
             if isinstance(parsed_notice, SvomRetraction):
-                kind = "retraction"
+                retractions = parsed_notice.retractions
             else:
                 localization = notice_localization(
                     parsed_notice.ra,
                     parsed_notice.dec,
                     parsed_notice.error_radius,
                 )
-                kind = "localization" if localization is not None else "alert"
+                retractions = ()
 
             return Notice(
                 ivorn=parsed_notice.ivorn,
@@ -220,7 +218,7 @@ def parse_message(message: Message) -> Notice:
                 burst_datetime=parsed_notice.burst_datetime,
                 mission="SVOM",
                 instrument=parsed_notice.instrument,
-                kind=kind,
+                retractions=retractions,
             )
         case _:
             raise ValueError(f"Unsupported message topic: {topic}")
@@ -312,6 +310,7 @@ def insert_message(
     topic = message.topic()
     notice = parse_message(message)
     localization = notice.localization
+    is_retraction = bool(notice.retractions)
     # we annotate the mission for disambiguation: events are not mission-specific
     event_external_id = f"{notice.mission}:{notice.burst_id}"
     raw_uri = filepath.resolve().as_uri()
@@ -327,7 +326,7 @@ def insert_message(
             # starting mid-sequence because we missed alerts, or the actual sequence
             # didn't start with an alert. this means we could be starting a sequence
             # off a retraction.
-            if event_info.is_new and notice.kind != "retraction":
+            if event_info.is_new and not is_retraction:
                 schedule_ztf_conesearch(
                     cursor,
                     event_id=event_info.event_id,
@@ -337,14 +336,14 @@ def insert_message(
                     total=DEFAULT_CONESEARCH_TOTAL,
                     max_retry=DEFAULT_CONESEARCH_MAXRETRY,
                 )
-            insert_notice(
+            notice_id = insert_notice(
                 cursor,
                 event_id=event_info.event_id,
                 ivorn=notice.ivorn,
                 topic=topic,
                 mission=notice.mission,
                 instrument=notice.instrument,
-                kind=notice.kind,
+                is_retraction=is_retraction,
                 published_at=notice.published_at,
                 burst_datetime=notice.burst_datetime,
                 raw_uri=raw_uri,
@@ -352,6 +351,13 @@ def insert_message(
                 dec=localization.dec if localization is not None else None,
                 err_radius=localization.err_radius if localization is not None else None,
             )
+            if is_retraction:
+                mark_retracted_notices(
+                    cursor,
+                    event_id=event_info.event_id,
+                    retraction_notice_id=notice_id,
+                    target_ivorns=notice.retractions,
+                )
 
         db_conn.commit()
     except Exception:
