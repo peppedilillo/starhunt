@@ -341,6 +341,8 @@ def insert_message(
                 event_id=event_info.event_id,
                 ivorn=notice.ivorn,
                 topic=topic,
+                kafka_partition=message.partition(),
+                kafka_offset=message.offset(),
                 mission=notice.mission,
                 instrument=notice.instrument,
                 is_retraction=is_retraction,

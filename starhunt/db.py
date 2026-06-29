@@ -116,6 +116,8 @@ def insert_notice(
     event_id: int,
     ivorn: str,
     topic: str,
+    kafka_partition: int,
+    kafka_offset: int,
     mission: str,
     instrument: str,
     is_retraction: bool,
@@ -133,6 +135,8 @@ def insert_notice(
         event_id: Event primary key.
         ivorn: Stable notice identifier.
         topic: Kafka topic carrying the notice.
+        kafka_partition: Kafka partition that carried the notice.
+        kafka_offset: Kafka offset that carried the notice.
         mission: Mission that produced the notice.
         instrument: Instrument that produced the notice.
         is_retraction: Whether the notice invalidates earlier cited notices.
@@ -152,6 +156,8 @@ def insert_notice(
             event_id,
             ivorn,
             topic,
+            kafka_partition,
+            kafka_offset,
             mission,
             instrument,
             is_retraction,
@@ -162,14 +168,16 @@ def insert_notice(
             err_radius,
             raw_uri
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (ivorn) DO NOTHING
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (topic, kafka_partition, kafka_offset) DO NOTHING
         RETURNING id
         """,
         (
             event_id,
             ivorn,
             topic,
+            kafka_partition,
+            kafka_offset,
             mission,
             instrument,
             is_retraction,
@@ -187,9 +195,13 @@ def insert_notice(
 
     cursor.execute(
         """
-        SELECT id FROM notices WHERE ivorn = %s
+        SELECT id
+        FROM notices
+        WHERE topic = %s
+            AND kafka_partition = %s
+            AND kafka_offset = %s
         """,
-        (ivorn,),
+        (topic, kafka_partition, kafka_offset),
     )
     return cursor.fetchone()[0]
 

@@ -11,6 +11,9 @@ CREATE TABLE notices (
     event_id bigint NOT NULL REFERENCES events(id) ON DELETE CASCADE,
     ivorn text NOT NULL UNIQUE,
     topic text NOT NULL,
+    -- Kafka record identity used for ingestion idempotency.
+    kafka_partition integer NOT NULL,
+    kafka_offset bigint NOT NULL,
     mission text NOT NULL,
     instrument text NOT NULL,
     published_at timestamptz NOT NULL,
@@ -33,7 +36,8 @@ CREATE TABLE notices (
     -- a notice cannot retract itself.
     CHECK (retracted_by IS NULL OR retracted_by <> id),
     -- retraction notices cannot be retracted until real examples require it.
-    CHECK (NOT is_retraction OR retracted_by IS NULL)
+    CHECK (NOT is_retraction OR retracted_by IS NULL),
+    UNIQUE (topic, kafka_partition, kafka_offset)
 );
 
 CREATE TABLE jobs (

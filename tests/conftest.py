@@ -33,12 +33,20 @@ TOPICS_BY_FILENAME_SUFFIX = {
 class FixtureMessage:
     topic_name: str
     payload: bytes
+    kafka_partition: int = 0
+    kafka_offset: int = 0
 
     def topic(self):
         return self.topic_name
 
     def value(self):
         return self.payload
+
+    def partition(self):
+        return self.kafka_partition
+
+    def offset(self):
+        return self.kafka_offset
 
 
 @pytest.fixture
@@ -75,6 +83,11 @@ def fixture_topic(path: Path):
     raise AssertionError(f"Unsupported fixture filename: {path.name}")
 
 
+def fixture_kafka_coordinates(path: Path):
+    partition, offset, _ = path.name.split("_", maxsplit=2)
+    return int(partition), int(offset)
+
+
 def parsed_notice(path: Path):
     return PARSERS[fixture_topic(path)](path.read_bytes())
 
@@ -89,7 +102,13 @@ def event_external_id(path: Path):
 
 
 def insert_fixture(conn, path: Path):
-    message = FixtureMessage(fixture_topic(path), path.read_bytes())
+    kafka_partition, kafka_offset = fixture_kafka_coordinates(path)
+    message = FixtureMessage(
+        fixture_topic(path),
+        path.read_bytes(),
+        kafka_partition=kafka_partition,
+        kafka_offset=kafka_offset,
+    )
     insert_message(message, path, conn)
 
 

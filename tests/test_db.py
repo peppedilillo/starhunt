@@ -2,6 +2,9 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 
+import psycopg
+import pytest
+
 from conftest import alert_only_fixture
 from conftest import event_external_id
 from conftest import insert_fixture
@@ -41,6 +44,85 @@ def test_get_or_create_event_returns_existing_event_info(db_conn):
     assert first.is_new is True
     assert second.is_new is False
     assert second.event_id == first.event_id
+
+
+def test_insert_notice_is_idempotent_by_kafka_coordinates(db_conn):
+    published_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    with db_conn.cursor() as cur:
+        event = get_or_create_event(cur, external_id="Fermi:kafka-idempotent")
+        first = insert_notice(
+            cur,
+            event_id=event.event_id,
+            ivorn="ivo://nasa.gsfc.gcn/Fermi#kafka-idempotent",
+            topic="gcn.classic.voevent.FERMI_GBM_ALERT",
+            kafka_partition=7,
+            kafka_offset=42,
+            mission="Fermi",
+            instrument="GBM",
+            is_retraction=False,
+            published_at=published_at,
+            burst_datetime=published_at,
+            raw_uri="file:///tmp/kafka-idempotent.xml",
+        )
+        second = insert_notice(
+            cur,
+            event_id=event.event_id,
+            ivorn="ivo://nasa.gsfc.gcn/Fermi#kafka-idempotent",
+            topic="gcn.classic.voevent.FERMI_GBM_ALERT",
+            kafka_partition=7,
+            kafka_offset=42,
+            mission="Fermi",
+            instrument="GBM",
+            is_retraction=False,
+            published_at=published_at,
+            burst_datetime=published_at,
+            raw_uri="file:///tmp/kafka-idempotent.xml",
+        )
+        cur.execute("SELECT count(*) FROM notices")
+        notice_count = cur.fetchone()[0]
+
+    assert second == first
+    assert notice_count == 1
+
+
+def test_insert_notice_rejects_duplicate_ivorn_at_different_kafka_coordinates(db_conn):
+    published_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    with db_conn.cursor() as cur:
+        event = get_or_create_event(cur, external_id="Fermi:duplicate-ivorn")
+        insert_notice(
+            cur,
+            event_id=event.event_id,
+            ivorn="ivo://nasa.gsfc.gcn/Fermi#duplicate-ivorn",
+            topic="gcn.classic.voevent.FERMI_GBM_ALERT",
+            kafka_partition=7,
+            kafka_offset=42,
+            mission="Fermi",
+            instrument="GBM",
+            is_retraction=False,
+            published_at=published_at,
+            burst_datetime=published_at,
+            raw_uri="file:///tmp/duplicate-ivorn-first.xml",
+        )
+
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            insert_notice(
+                cur,
+                event_id=event.event_id,
+                ivorn="ivo://nasa.gsfc.gcn/Fermi#duplicate-ivorn",
+                topic="gcn.classic.voevent.FERMI_GBM_ALERT",
+                kafka_partition=7,
+                kafka_offset=43,
+                mission="Fermi",
+                instrument="GBM",
+                is_retraction=False,
+                published_at=published_at,
+                burst_datetime=published_at,
+                raw_uri="file:///tmp/duplicate-ivorn-second.xml",
+            )
+
+    db_conn.rollback()
 
 
 def test_find_best_localization_returns_none_without_localization(db_conn):
@@ -196,6 +278,8 @@ def test_find_best_localization_ignores_localization_retracted_before_cutoff(db_
             event_id=event.event_id,
             ivorn="ivo://org.svom/fsc#retracted-before-cutoff_slewing",
             topic="gcn.notices.svom.voevent.eclairs",
+            kafka_partition=1,
+            kafka_offset=1,
             mission="SVOM",
             instrument="ECLAIRs",
             is_retraction=False,
@@ -211,6 +295,8 @@ def test_find_best_localization_ignores_localization_retracted_before_cutoff(db_
             event_id=event.event_id,
             ivorn="ivo://org.svom/fsc#retracted-before-cutoff_retraction",
             topic="gcn.notices.svom.voevent.eclairs",
+            kafka_partition=1,
+            kafka_offset=2,
             mission="SVOM",
             instrument="ECLAIRs",
             is_retraction=True,
@@ -242,6 +328,8 @@ def test_find_best_localization_keeps_localization_retracted_after_cutoff(db_con
             event_id=event.event_id,
             ivorn="ivo://org.svom/fsc#retracted-after-cutoff_slewing",
             topic="gcn.notices.svom.voevent.eclairs",
+            kafka_partition=1,
+            kafka_offset=3,
             mission="SVOM",
             instrument="ECLAIRs",
             is_retraction=False,
@@ -257,6 +345,8 @@ def test_find_best_localization_keeps_localization_retracted_after_cutoff(db_con
             event_id=event.event_id,
             ivorn="ivo://org.svom/fsc#retracted-after-cutoff_retraction",
             topic="gcn.notices.svom.voevent.eclairs",
+            kafka_partition=1,
+            kafka_offset=4,
             mission="SVOM",
             instrument="ECLAIRs",
             is_retraction=True,
