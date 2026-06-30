@@ -4,6 +4,7 @@ from conftest import normalized_notice
 from conftest import parsed_notice
 
 from starhunt.consumer import NoticeVOEvent
+from gcn_parser.ep import parse_einstein_probe_wxt
 
 
 def notices_by_ivorn():
@@ -59,11 +60,21 @@ def test_einstein_probe_wxt_notices_have_one_id():
 
 
 def test_einstein_probe_wxt_ids_are_unique():
+    paths = [
+        path
+        for path in fixture_paths()
+        if fixture_topic(path) == "gcn.notices.einstein_probe.wxt.alert"
+    ]
+    _burst_ids = [
+        id_
+        for path in paths
+        for id_ in parse_einstein_probe_wxt(path.read_bytes()).id
+    ]
     burst_ids = [
         normalized_notice(path).burst_id
         for path in fixture_paths()
         if fixture_topic(path) == "gcn.notices.einstein_probe.wxt.alert"
     ]
 
-    assert len(burst_ids) == 29
+    assert len(burst_ids) == len(_burst_ids)
     assert len(burst_ids) == len(set(burst_ids))
