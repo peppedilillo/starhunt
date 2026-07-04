@@ -99,6 +99,9 @@ CREATE TABLE conesearches (
 CREATE INDEX notices_event_published_at_idx
 ON notices (event_id, published_at);
 
+CREATE INDEX events_created_at_id_idx
+ON events (created_at DESC, id DESC);
+
 CREATE INDEX conesearches_event_queried_at_idx
 ON conesearches (event_id, queried_at);
 

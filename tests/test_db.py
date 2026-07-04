@@ -2,15 +2,14 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 
-import psycopg
-import pytest
-
 from conftest import alert_only_fixture
 from conftest import event_external_id
 from conftest import insert_fixture
 from conftest import localization_fixtures
 from conftest import normalized_notice
 from conftest import parsed_notice
+import psycopg
+import pytest
 
 from starhunt.db import Event
 from starhunt.db import find_best_localization
@@ -18,8 +17,23 @@ from starhunt.db import get_event
 from starhunt.db import insert_event
 from starhunt.db import insert_notice_json
 from starhunt.db import insert_notice_voevent
+from starhunt.db import list_events
 from starhunt.db import Localization
 from starhunt.db import mark_retracted_notices
+
+
+def insert_event_at(conn, *, external_id: str, created_at: datetime) -> int:
+    with conn.cursor() as cur:
+        event_id = insert_event(cur, external_id=external_id)
+        cur.execute(
+            """
+            UPDATE events
+            SET created_at = %s
+            WHERE id = %s
+            """,
+            (created_at, event_id),
+        )
+    return event_id
 
 
 def test_get_event_returns_none_for_missing_event(db_conn):
@@ -48,6 +62,61 @@ def test_get_event_returns_event_dataclass(db_conn):
         created_at=event.created_at,
     )
     assert isinstance(event.created_at, datetime)
+
+
+def test_list_events_returns_events_newest_first(db_conn):
+    oldest = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    newest = datetime(2026, 1, 3, tzinfo=timezone.utc)
+
+    insert_event_at(db_conn, external_id="Fermi:oldest", created_at=oldest)
+    insert_event_at(db_conn, external_id="Fermi:newest-a", created_at=newest)
+    insert_event_at(db_conn, external_id="Fermi:newest-b", created_at=newest)
+
+    with db_conn.cursor() as cur:
+        events = list_events(cur)
+
+    assert [event.external_id for event in events] == [
+        "Fermi:newest-b",
+        "Fermi:newest-a",
+        "Fermi:oldest",
+    ]
+
+
+def test_list_events_filters_tstart_inclusively(db_conn):
+    tstart = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    insert_event_at(db_conn, external_id="Fermi:before", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    insert_event_at(db_conn, external_id="Fermi:at-start", created_at=tstart)
+
+    with db_conn.cursor() as cur:
+        events = list_events(cur, tstart=tstart)
+
+    assert [event.external_id for event in events] == ["Fermi:at-start"]
+
+
+def test_list_events_filters_tstop_exclusively(db_conn):
+    tstop = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    insert_event_at(db_conn, external_id="Fermi:before-stop", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    insert_event_at(db_conn, external_id="Fermi:at-stop", created_at=tstop)
+
+    with db_conn.cursor() as cur:
+        events = list_events(cur, tstop=tstop)
+
+    assert [event.external_id for event in events] == ["Fermi:before-stop"]
+
+
+def test_list_events_filters_half_open_interval(db_conn):
+    tstart = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    tstop = datetime(2026, 1, 4, tzinfo=timezone.utc)
+
+    insert_event_at(db_conn, external_id="Fermi:before", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    insert_event_at(db_conn, external_id="Fermi:start", created_at=tstart)
+    insert_event_at(db_conn, external_id="Fermi:middle", created_at=datetime(2026, 1, 3, tzinfo=timezone.utc))
+    insert_event_at(db_conn, external_id="Fermi:stop", created_at=tstop)
+
+    with db_conn.cursor() as cur:
+        events = list_events(cur, tstart=tstart, tstop=tstop)
+
+    assert [event.external_id for event in events] == ["Fermi:middle", "Fermi:start"]
 
 
 def test_insert_notice_voevent_is_idempotent_by_kafka_coordinates(db_conn):

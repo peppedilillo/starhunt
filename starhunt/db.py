@@ -104,6 +104,44 @@ def get_event(cursor, external_id: str) -> Event | None:
     return Event(*row)
 
 
+def list_events(
+    cursor,
+    *,
+    tstart: datetime | None = None,
+    tstop: datetime | None = None,
+) -> list[Event]:
+    """Return events ordered by creation time, newest first.
+
+    Args:
+        cursor: Database cursor.
+        tstart: Inclusive created_at lower bound.
+        tstop: Exclusive created_at upper bound.
+
+    Returns:
+        Event rows in descending creation order.
+    """
+    where_clauses = []
+    params = {}
+    if tstart is not None:
+        where_clauses.append("created_at >= %(tstart)s")
+        params["tstart"] = tstart
+    if tstop is not None:
+        where_clauses.append("created_at < %(tstop)s")
+        params["tstop"] = tstop
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+    cursor.execute(
+        f"""
+        SELECT id, external_id, created_at
+        FROM events
+        {where_sql}
+        ORDER BY created_at DESC, id DESC
+        """,
+        params,
+    )
+    return [Event(*row) for row in cursor.fetchall()]
+
+
 def insert_event(cursor, external_id: str) -> int:
     """Insert an event and return its primary key.
 
