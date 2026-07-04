@@ -11,9 +11,11 @@ requires-python = ">=3.13"
 dependencies = [
     "click>=8.4.1",
     "confluent-kafka>=2.14.2",
+    "fastapi>=0.139.0",
     "gcn-kafka>=0.3.4",
     "gcn-notice-parser>=0.1.1",
     "psycopg[binary]>=3.3.4",
+    "uvicorn>=0.50.0",
 ]
 
 [dependency-groups]
@@ -33,3 +35,6 @@ pretty = 'scripts.pretty:main'
 markers = [
     "smoke: tests that call live external services",
 ]
+
+[tool.fastapi]
+entrypoint = "starhunt.api:app"

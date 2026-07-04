@@ -54,7 +54,28 @@ services:
       postgres:
         condition: service_healthy
     deploy:
-      replicas: ${WORKER_REPLICAS:-1}
+      replicas: ${STARHUNT_WORKER_REPLICAS:-1}
+
+  api:
+    build: .
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST is required}
+      POSTGRES_PORT: ${POSTGRES_PORT:?POSTGRES_PORT is required}
+    command:
+      - uvicorn
+      - starhunt.api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    ports:
+      - "${STARHUNT_API_PORT}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   postgres-test:
     image: postgres:16-bookworm

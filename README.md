@@ -7,14 +7,18 @@ Tools for searching optical counterparts to high-energy astrophysical transients
 ```shell
 cp .env.sample .env
 ${EDITOR:-vi} .env
-mkdir -p artifacts
-docker compose --env-file .env build postgres consumer worker
-docker compose --env-file .env up -d postgres consumer worker
+mkdir -p artifacts # stores raw notices and non-empty broker responses
+docker compose --env-file .env build
+docker compose --env-file .env up -d
 docker compose --env-file .env ps
-docker compose --env-file .env logs consumer worker | uv run pretty
+docker compose --env-file .env logs consumer worker api | uv run pretty
 ```
 
-The `artifacts` directory stores raw notices and non-empty broker responses.
+To run the API locally: 
+
+```shell
+uv run uvicorn starhunt.api:app
+```
 
 ## Tests
 
