@@ -12,49 +12,52 @@ from conftest import localization_fixtures
 from conftest import normalized_notice
 from conftest import parsed_notice
 
+from starhunt.db import Event
 from starhunt.db import find_best_localization
-from starhunt.db import get_or_create_event
+from starhunt.db import get_event
+from starhunt.db import insert_event
 from starhunt.db import insert_notice_json
 from starhunt.db import insert_notice_voevent
 from starhunt.db import Localization
 from starhunt.db import mark_retracted_notices
 
 
-def test_get_or_create_event_returns_new_event_info(db_conn):
+def test_get_event_returns_none_for_missing_event(db_conn):
     with db_conn.cursor() as cur:
-        event_info = get_or_create_event(
-            cur,
-            external_id="Fermi:test-new-event",
-        )
+        event = get_event(cur, external_id="Fermi:test-missing-event")
 
-    assert event_info.is_new is True
-    assert isinstance(event_info.event_id, int)
+    assert event is None
 
 
-def test_get_or_create_event_returns_existing_event_info(db_conn):
+def test_insert_event_returns_event_id(db_conn):
     with db_conn.cursor() as cur:
-        first = get_or_create_event(
-            cur,
-            external_id="Fermi:test-existing-event",
-        )
-        second = get_or_create_event(
-            cur,
-            external_id="Fermi:test-existing-event",
-        )
+        event_id = insert_event(cur, external_id="Fermi:test-new-event")
 
-    assert first.is_new is True
-    assert second.is_new is False
-    assert second.event_id == first.event_id
+    assert isinstance(event_id, int)
+
+
+def test_get_event_returns_event_dataclass(db_conn):
+    with db_conn.cursor() as cur:
+        event_id = insert_event(cur, external_id="Fermi:test-existing-event")
+        event = get_event(cur, external_id="Fermi:test-existing-event")
+
+    assert event is not None
+    assert event == Event(
+        id=event_id,
+        external_id="Fermi:test-existing-event",
+        created_at=event.created_at,
+    )
+    assert isinstance(event.created_at, datetime)
 
 
 def test_insert_notice_voevent_is_idempotent_by_kafka_coordinates(db_conn):
     published_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
     with db_conn.cursor() as cur:
-        event = get_or_create_event(cur, external_id="Fermi:kafka-idempotent")
+        event_id = insert_event(cur, external_id="Fermi:kafka-idempotent")
         first = insert_notice_voevent(
             cur,
-            event_id=event.event_id,
+            event_id=event_id,
             ivorn="ivo://nasa.gsfc.gcn/Fermi#kafka-idempotent",
             topic="gcn.classic.voevent.FERMI_GBM_ALERT",
             kafka_partition=7,
@@ -68,7 +71,7 @@ def test_insert_notice_voevent_is_idempotent_by_kafka_coordinates(db_conn):
         )
         second = insert_notice_voevent(
             cur,
-            event_id=event.event_id,
+            event_id=event_id,
             ivorn="ivo://nasa.gsfc.gcn/Fermi#kafka-idempotent",
             topic="gcn.classic.voevent.FERMI_GBM_ALERT",
             kafka_partition=7,
@@ -91,10 +94,10 @@ def test_insert_notice_json_is_idempotent_by_kafka_coordinates(db_conn):
     published_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
     with db_conn.cursor() as cur:
-        event = get_or_create_event(cur, external_id="Einstein Probe:json-idempotent")
+        event_id = insert_event(cur, external_id="Einstein Probe:json-idempotent")
         first = insert_notice_json(
             cur,
-            event_id=event.event_id,
+            event_id=event_id,
             topic="gcn.notices.einstein_probe.wxt.alert",
             kafka_partition=7,
             kafka_offset=42,
@@ -110,7 +113,7 @@ def test_insert_notice_json_is_idempotent_by_kafka_coordinates(db_conn):
         )
         second = insert_notice_json(
             cur,
-            event_id=event.event_id,
+            event_id=event_id,
             topic="gcn.notices.einstein_probe.wxt.alert",
             kafka_partition=7,
             kafka_offset=42,
@@ -138,10 +141,10 @@ def test_insert_notice_voevent_rejects_duplicate_ivorn_at_different_kafka_coordi
     published_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
     with db_conn.cursor() as cur:
-        event = get_or_create_event(cur, external_id="Fermi:duplicate-ivorn")
+        event_id = insert_event(cur, external_id="Fermi:duplicate-ivorn")
         insert_notice_voevent(
             cur,
-            event_id=event.event_id,
+            event_id=event_id,
             ivorn="ivo://nasa.gsfc.gcn/Fermi#duplicate-ivorn",
             topic="gcn.classic.voevent.FERMI_GBM_ALERT",
             kafka_partition=7,
@@ -157,7 +160,7 @@ def test_insert_notice_voevent_rejects_duplicate_ivorn_at_different_kafka_coordi
         with pytest.raises(psycopg.errors.UniqueViolation):
             insert_notice_voevent(
                 cur,
-                event_id=event.event_id,
+                event_id=event_id,
                 ivorn="ivo://nasa.gsfc.gcn/Fermi#duplicate-ivorn",
                 topic="gcn.classic.voevent.FERMI_GBM_ALERT",
                 kafka_partition=7,
@@ -320,10 +323,10 @@ def test_find_best_localization_ignores_localization_retracted_before_cutoff(db_
     cutoff_at = published_at + timedelta(minutes=20)
 
     with db_conn.cursor() as cur:
-        event = get_or_create_event(cur, external_id="SVOM:retracted-before-cutoff")
+        event_id = insert_event(cur, external_id="SVOM:retracted-before-cutoff")
         insert_notice_voevent(
             cur,
-            event_id=event.event_id,
+            event_id=event_id,
             ivorn="ivo://org.svom/fsc#retracted-before-cutoff_slewing",
             topic="gcn.notices.svom.voevent.eclairs",
             kafka_partition=1,
@@ -340,7 +343,7 @@ def test_find_best_localization_ignores_localization_retracted_before_cutoff(db_
         )
         retraction_id = insert_notice_voevent(
             cur,
-            event_id=event.event_id,
+            event_id=event_id,
             ivorn="ivo://org.svom/fsc#retracted-before-cutoff_retraction",
             topic="gcn.notices.svom.voevent.eclairs",
             kafka_partition=1,
@@ -354,12 +357,12 @@ def test_find_best_localization_ignores_localization_retracted_before_cutoff(db_
         )
         mark_retracted_notices(
             cur,
-            event_id=event.event_id,
+            event_id=event_id,
             retraction_notice_id=retraction_id,
             target_ivorns=("ivo://org.svom/fsc#retracted-before-cutoff_slewing",),
         )
 
-        localization = find_best_localization(cur, event.event_id, cutoff_at=cutoff_at)
+        localization = find_best_localization(cur, event_id, cutoff_at=cutoff_at)
 
     assert localization is None
 
@@ -370,10 +373,10 @@ def test_find_best_localization_keeps_localization_retracted_after_cutoff(db_con
     retracted_at = published_at + timedelta(minutes=20)
 
     with db_conn.cursor() as cur:
-        event = get_or_create_event(cur, external_id="SVOM:retracted-after-cutoff")
+        event_id = insert_event(cur, external_id="SVOM:retracted-after-cutoff")
         insert_notice_voevent(
             cur,
-            event_id=event.event_id,
+            event_id=event_id,
             ivorn="ivo://org.svom/fsc#retracted-after-cutoff_slewing",
             topic="gcn.notices.svom.voevent.eclairs",
             kafka_partition=1,
@@ -390,7 +393,7 @@ def test_find_best_localization_keeps_localization_retracted_after_cutoff(db_con
         )
         retraction_id = insert_notice_voevent(
             cur,
-            event_id=event.event_id,
+            event_id=event_id,
             ivorn="ivo://org.svom/fsc#retracted-after-cutoff_retraction",
             topic="gcn.notices.svom.voevent.eclairs",
             kafka_partition=1,
@@ -404,11 +407,11 @@ def test_find_best_localization_keeps_localization_retracted_after_cutoff(db_con
         )
         mark_retracted_notices(
             cur,
-            event_id=event.event_id,
+            event_id=event_id,
             retraction_notice_id=retraction_id,
             target_ivorns=("ivo://org.svom/fsc#retracted-after-cutoff_slewing",),
         )
 
-        localization = find_best_localization(cur, event.event_id, cutoff_at=cutoff_at)
+        localization = find_best_localization(cur, event_id, cutoff_at=cutoff_at)
 
     assert localization == Localization(ra=1, dec=2, err_radius=0.1)

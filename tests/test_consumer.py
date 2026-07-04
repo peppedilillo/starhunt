@@ -16,7 +16,7 @@ from starhunt.consumer import NoticeJSON
 from starhunt.consumer import NoticeVOEvent
 from starhunt.consumer import schedule_ztf_conesearch
 from starhunt.consumer import ZTF_CONESEARCH_JOB_TYPE
-from starhunt.db import get_or_create_event
+from starhunt.db import insert_event
 
 
 def table_counts(conn):
@@ -186,13 +186,13 @@ def test_schedule_ztf_conesearch_creates_time_window_jobs(db_conn):
     period = timedelta(hours=6)
 
     with db_conn.cursor() as cur:
-        event_info = get_or_create_event(
+        event_id = insert_event(
             cur,
             external_id="Fermi:test-scheduled-event",
         )
         schedule_ztf_conesearch(
             cur,
-            event_id=event_info.event_id,
+            event_id=event_id,
             burst_datetime=burst_datetime,
             offset=offset,
             period=period,
@@ -206,7 +206,7 @@ def test_schedule_ztf_conesearch_creates_time_window_jobs(db_conn):
         expected_start = burst_datetime + index * period
         expected_end = expected_start + period
         assert row == (
-            event_info.event_id,
+            event_id,
             ZTF_CONESEARCH_JOB_TYPE,
             expected_start,
             expected_end,
@@ -223,14 +223,14 @@ def test_schedule_ztf_conesearch_is_idempotent(db_conn):
     burst_datetime = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
 
     with db_conn.cursor() as cur:
-        event_info = get_or_create_event(
+        event_id = insert_event(
             cur,
             external_id="Fermi:test-idempotent-schedule",
         )
         for _ in range(2):
             schedule_ztf_conesearch(
                 cur,
-                event_id=event_info.event_id,
+                event_id=event_id,
                 burst_datetime=burst_datetime,
                 offset=timedelta(hours=2),
                 period=timedelta(hours=6),
@@ -296,14 +296,14 @@ def test_schedule_ztf_conesearch_rejects_invalid_inputs(
     message,
 ):
     with db_conn.cursor() as cur:
-        event_info = get_or_create_event(
+        event_id = insert_event(
             cur,
             external_id="Fermi:test-invalid-schedule",
         )
         with pytest.raises(ValueError, match=message):
             schedule_ztf_conesearch(
                 cur,
-                event_id=event_info.event_id,
+                event_id=event_id,
                 burst_datetime=burst_datetime,
                 offset=offset,
                 period=period,

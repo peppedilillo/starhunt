@@ -12,7 +12,7 @@ from conftest import parsed_notice
 from starhunt import worker
 from starhunt.consumer import ZTF_CONESEARCH_JOB_TYPE
 from starhunt.db import claim_expired_jobs
-from starhunt.db import get_or_create_event
+from starhunt.db import insert_event
 from starhunt.db import pick_job
 from starhunt.worker import run_job
 
@@ -67,7 +67,7 @@ def create_running_job(
 ):
     now = datetime.now(timezone.utc)
     with conn.cursor() as cur:
-        event = get_or_create_event(
+        event_id = insert_event(
             cur,
             external_id=f"Fermi:{worker_id}",
         )
@@ -85,7 +85,7 @@ def create_running_job(
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
             (
-                event.event_id,
+                event_id,
                 ZTF_CONESEARCH_JOB_TYPE,
                 now - timedelta(hours=2),
                 now - timedelta(hours=1),
@@ -256,7 +256,7 @@ def test_reclaimed_job_attempt_count_increments_only_when_picked_again(db_conn):
 def test_pick_job_uses_run_after_for_worker_eligibility(db_conn):
     now = datetime.now(timezone.utc)
     with db_conn.cursor() as cur:
-        event = get_or_create_event(
+        event_id = insert_event(
             cur,
             external_id="Fermi:future-run-after",
         )
@@ -274,7 +274,7 @@ def test_pick_job_uses_run_after_for_worker_eligibility(db_conn):
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
             (
-                event.event_id,
+                event_id,
                 ZTF_CONESEARCH_JOB_TYPE,
                 now - timedelta(hours=2),
                 now - timedelta(hours=1),
@@ -443,7 +443,7 @@ def test_run_job_query_failure_can_dead_letter(db_conn, tmp_path):
 def test_run_job_dead_letters_unsupported_job_type(db_conn, tmp_path):
     now = datetime.now(timezone.utc)
     with db_conn.cursor() as cur:
-        event = get_or_create_event(
+        event_id = insert_event(
             cur,
             external_id="Fermi:unsupported-job-event",
         )
@@ -461,7 +461,7 @@ def test_run_job_dead_letters_unsupported_job_type(db_conn, tmp_path):
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
             (
-                event.event_id,
+                event_id,
                 "unsupported_job_type",
                 now - timedelta(hours=2),
                 now - timedelta(hours=1),

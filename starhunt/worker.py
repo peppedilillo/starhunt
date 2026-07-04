@@ -20,7 +20,7 @@ from .db import claim_expired_jobs
 from .db import find_best_localization
 from .db import init_db_conn
 from .db import insert_conesearch
-from .db import JobInfo
+from .db import Job
 from .db import mark_job_dead
 from .db import mark_job_failed
 from .db import mark_job_succeeded
@@ -41,7 +41,7 @@ class MissingLocalization(Exception):
     pass
 
 
-def write_response(job: JobInfo, content: bytes, outdir: Path) -> Path:
+def write_response(job: Job, content: bytes, outdir: Path) -> Path:
     """Write a broker response to disk.
 
     Args:
@@ -59,7 +59,7 @@ def write_response(job: JobInfo, content: bytes, outdir: Path) -> Path:
 
 def execute_ztf_fink_conesearch(
     cursor,
-    job: JobInfo,
+    job: Job,
     outdir: Path,
     timeout: float | None,
     query_fn=conesearch_fink_ztf,
@@ -127,7 +127,7 @@ def execute_ztf_fink_conesearch(
 
 def run_job(
     db_conn: Connection,
-    job: JobInfo,
+    job: Job,
     outdir: Path,
     retry_delay: timedelta,
     timeout: float | None,

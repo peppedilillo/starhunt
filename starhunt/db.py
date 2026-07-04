@@ -8,16 +8,18 @@ from psycopg import Connection
 
 
 @dataclass(frozen=True)
-class EventInfo:
-    """Result of an event lookup or insert.
+class Event:
+    """Event row metadata.
 
     Attributes:
-        event_id: Event primary key.
-        is_new: Whether the event was inserted by the current operation.
+        id: Event primary key.
+        external_id: Stable mission-qualified event id.
+        created_at: Time the event row was inserted.
     """
 
-    event_id: int
-    is_new: bool
+    id: int
+    external_id: str
+    created_at: datetime
 
 
 @dataclass(frozen=True)
@@ -36,7 +38,7 @@ class Localization:
 
 
 @dataclass(frozen=True)
-class JobInfo:
+class Job:
     """Claimed job metadata.
 
     Attributes:
@@ -77,8 +79,8 @@ def init_db_conn() -> Connection:
     )
 
 
-def get_or_create_event(cursor, external_id: str) -> EventInfo:
-    """Return an event id, inserting the event when absent.
+def get_event(cursor, external_id: str) -> Event | None:
+    """Return an event by external id.
 
     Args:
         cursor: Database cursor.
@@ -86,28 +88,43 @@ def get_or_create_event(cursor, external_id: str) -> EventInfo:
             disambiguates ids; mission metadata lives on notices.
 
     Returns:
-        Event information including whether a new row was inserted.
+        The event row, or None when absent.
     """
     cursor.execute(
         """
-        INSERT INTO events (external_id)
-        VALUES (%s)
-        ON CONFLICT (external_id) DO NOTHING
-        RETURNING id
+        SELECT id, external_id, created_at
+        FROM events
+        WHERE external_id = %s
         """,
         (external_id,),
     )
     row = cursor.fetchone()
-    if row is not None:
-        return EventInfo(event_id=row[0], is_new=True)
+    if row is None:
+        return None
+    return Event(*row)
+
+
+def insert_event(cursor, external_id: str) -> int:
+    """Insert an event and return its primary key.
+
+    Args:
+        cursor: Database cursor.
+        external_id: Stable mission-qualified event id. The mission tag only
+            disambiguates ids; mission metadata lives on notices.
+
+    Returns:
+        Event primary key.
+    """
 
     cursor.execute(
         """
-        SELECT id FROM events WHERE external_id = %s
+        INSERT INTO events (external_id)
+        VALUES (%s)
+        RETURNING id
         """,
         (external_id,),
     )
-    return EventInfo(event_id=cursor.fetchone()[0], is_new=False)
+    return cursor.fetchone()[0]
 
 
 def _insert_notice(
@@ -401,7 +418,7 @@ def insert_conesearch(
 def pick_job(
     cursor,
     worker_id: str,
-) -> JobInfo | None:
+) -> Job | None:
     """Claim the next runnable job.
 
     ``run_after`` controls queue eligibility. ``scheduled_at`` is the stable
@@ -448,7 +465,7 @@ def pick_job(
     row = cursor.fetchone()
     if row is None:
         return None
-    return JobInfo(*row)
+    return Job(*row)
 
 
 def claim_expired_jobs(
@@ -592,7 +609,7 @@ def mark_job_dead(cursor, job_id: int, message: str):
 
 def mark_job_failed(
     cursor,
-    job: JobInfo,
+    job: Job,
     message: str,
     *,
     retry_delay: timedelta,

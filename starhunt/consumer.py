@@ -28,8 +28,9 @@ from gcn_parser.svom import parse_svom_retraction
 from gcn_parser.svom import SvomRetraction
 from psycopg import Connection
 
-from .db import get_or_create_event
+from .db import get_event
 from .db import init_db_conn
+from .db import insert_event
 from .db import insert_notice_json
 from .db import insert_notice_voevent
 from .db import Localization
@@ -386,19 +387,29 @@ def insert_message(
 
     try:
         with db_conn.cursor() as cursor:
-            event_info = get_or_create_event(
-                cursor,
-                external_id=event_external_id,
-            )
+            # this is acceptable for the moment: ingestion is serial.
+            # it may become dangerous if ingestion ever becomes concurrent.
+            # two consumer could check for a new event.
+            # the first in the race wins and commits its change.
+            # the loser in the race gets a UniqueViolation exception from the db
+            # and will not insert its message.
+            event = get_event(cursor, external_id=event_external_id)
+            if event is None:
+                event_id = insert_event(cursor, external_id=event_external_id)
+                is_new_event = True
+            else:
+                event_id = event.id
+                is_new_event = False
+
             # we check against retraction because, in general, there is no guarantee
             # that a message on a new event will be actual first alert. we could be
             # starting mid-sequence because we missed alerts, or the actual sequence
             # didn't start with an alert. this means we could be starting a sequence
             # off a retraction.
-            if event_info.is_new and not is_retraction:
+            if is_new_event and not is_retraction:
                 schedule_ztf_conesearch(
                     cursor,
-                    event_id=event_info.event_id,
+                    event_id=event_id,
                     burst_datetime=notice.burst_datetime,
                     offset=DEFAULT_CONESEARCH_OFFSET,
                     period=DEFAULT_CONESEARCH_PERIOD,
@@ -408,7 +419,7 @@ def insert_message(
             notice_id = insert_notice(
                 cursor,
                 notice,
-                event_id=event_info.event_id,
+                event_id=event_id,
                 topic=topic,
                 kafka_partition=message.partition(),
                 kafka_offset=message.offset(),
@@ -417,7 +428,7 @@ def insert_message(
             if is_retraction:
                 mark_retracted_notices(
                     cursor,
-                    event_id=event_info.event_id,
+                    event_id=event_id,
                     retraction_notice_id=notice_id,
                     target_ivorns=notice.retractions,
                 )
