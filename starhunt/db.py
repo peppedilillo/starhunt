@@ -9,13 +9,7 @@ from psycopg import Connection
 
 @dataclass(frozen=True)
 class Event:
-    """Event row metadata.
-
-    Attributes:
-        id: Event primary key.
-        external_id: Stable mission-qualified event id.
-        created_at: Time the event row was inserted.
-    """
+    """Event row metadata."""
 
     id: int
     external_id: str
@@ -23,14 +17,51 @@ class Event:
 
 
 @dataclass(frozen=True)
-class Localization:
-    """Sky position and error radius.
+class Notice:
+    """Notice row metadata."""
 
-    Attributes:
-        ra: Right ascension in degrees.
-        dec: Declination in degrees.
-        err_radius: Error radius in degrees.
-    """
+    id: int
+    event_id: int
+    format: str
+    topic: str
+    kafka_partition: int
+    kafka_offset: int
+    mission: str
+    instrument: str
+    published_at: datetime
+    burst_datetime: datetime
+    ra: float | None
+    dec: float | None
+    err_radius: float | None
+    raw_uri: str
+    is_retraction: bool
+    retracted_by: int | None
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class Conesearch:
+    """Cone-search row metadata."""
+
+    id: int
+    event_id: int
+    job_id: int
+    broker: str
+    survey: str
+    subject_time_start: datetime
+    subject_time_end: datetime
+    queried_at: datetime
+    ra: float
+    dec: float
+    radius_arcsec: float
+    alert_count: int
+    result_uri: str | None
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class Localization:
+    """Sky position and error radius, degrees."""
 
     ra: float
     dec: float
@@ -39,7 +70,7 @@ class Localization:
 
 @dataclass(frozen=True)
 class Job:
-    """Claimed job metadata.
+    """Job metadata.
 
     Attributes:
         job_id: Job primary key.
@@ -140,6 +171,81 @@ def list_events(
         params,
     )
     return [Event(*row) for row in cursor.fetchall()]
+
+
+def get_event_notices(cursor, event_id: int) -> list[Notice]:
+    """Return notice rows for an event, ordered by publication time.
+
+    Args:
+        cursor: Database cursor.
+        event_id: Event primary key.
+
+    Returns:
+        Notice rows in chronological order.
+    """
+    cursor.execute(
+        """
+        SELECT
+            id,
+            event_id,
+            format,
+            topic,
+            kafka_partition,
+            kafka_offset,
+            mission,
+            instrument,
+            published_at,
+            burst_datetime,
+            ra,
+            dec,
+            err_radius,
+            raw_uri,
+            is_retraction,
+            retracted_by,
+            created_at
+        FROM notices
+        WHERE event_id = %s
+        ORDER BY published_at ASC, id ASC
+        """,
+        (event_id,),
+    )
+    return [Notice(*row) for row in cursor.fetchall()]
+
+
+def get_event_conesearches(cursor, event_id: int) -> list[Conesearch]:
+    """Return cone-search rows for an event, ordered by subject time.
+
+    Args:
+        cursor: Database cursor.
+        event_id: Event primary key.
+
+    Returns:
+        Cone-search rows in chronological order.
+    """
+    cursor.execute(
+        """
+        SELECT
+            id,
+            event_id,
+            job_id,
+            broker,
+            survey,
+            subject_time_start,
+            subject_time_end,
+            queried_at,
+            ra,
+            dec,
+            radius_arcsec,
+            alert_count,
+            result_uri,
+            created_at
+        FROM conesearches
+        WHERE event_id = %s
+        ORDER BY subject_time_start ASC, id ASC
+        """,
+        (event_id,),
+    )
+    return [Conesearch(*row) for row in cursor.fetchall()]
 
 
 def insert_event(cursor, external_id: str) -> int:

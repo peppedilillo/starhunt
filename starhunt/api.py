@@ -11,8 +11,13 @@ from fastapi import HTTPException
 from psycopg import Connection
 
 from .db import Event
+from .db import get_event
+from .db import get_event_conesearches
+from .db import get_event_notices
 from .db import init_db_conn
 from .db import list_events
+from .timeline import build_event_milestones
+from .timeline import Milestone
 from .utils import is_tz_aware
 
 app = FastAPI()
@@ -73,3 +78,26 @@ def events(
 
     with db_conn.cursor() as cursor:
         return list_events(cursor, tstart=tstart_utc, tstop=tstop_utc)
+
+
+@app.get("/timeline", response_model=list[Milestone])
+def timeline(
+    event_id: str,
+    db_conn: Connection = Depends(get_db_conn),
+):
+    """Return milestones for an event external id.
+
+    Args:
+        event_id: Event external id.
+        db_conn: Database connection supplied by dependency injection.
+
+    Returns:
+        Notice and cone-search milestones ordered oldest first.
+    """
+    with db_conn.cursor() as cursor:
+        event = get_event(cursor, external_id=event_id)
+        if event is None:
+            raise HTTPException(status_code=404, detail="Event not found")
+        notices = get_event_notices(cursor, event.id)
+        conesearches = get_event_conesearches(cursor, event.id)
+        return build_event_milestones(notices, conesearches)

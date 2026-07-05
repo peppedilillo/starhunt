@@ -14,6 +14,9 @@ import pytest
 from starhunt.db import Event
 from starhunt.db import find_best_localization
 from starhunt.db import get_event
+from starhunt.db import get_event_conesearches
+from starhunt.db import get_event_notices
+from starhunt.db import insert_conesearch
 from starhunt.db import insert_event
 from starhunt.db import insert_notice_json
 from starhunt.db import insert_notice_voevent
@@ -34,6 +37,40 @@ def insert_event_at(conn, *, external_id: str, created_at: datetime) -> int:
             (created_at, event_id),
         )
     return event_id
+
+
+def insert_job(
+    cur,
+    *,
+    event_id: int,
+    subject_time_start: datetime,
+    subject_time_end: datetime | None = None,
+) -> int:
+    if subject_time_end is None:
+        subject_time_end = subject_time_start + timedelta(hours=1)
+    cur.execute(
+        """
+        INSERT INTO jobs (
+            event_id,
+            job_type,
+            subject_time_start,
+            subject_time_end,
+            scheduled_at,
+            run_after,
+            max_attempts
+        )
+        VALUES (%s, 'ztf_fink_conesearch', %s, %s, %s, %s, 1)
+        RETURNING id
+        """,
+        (
+            event_id,
+            subject_time_start,
+            subject_time_end,
+            subject_time_start,
+            subject_time_start,
+        ),
+    )
+    return cur.fetchone()[0]
 
 
 def test_get_event_returns_none_for_missing_event(db_conn):
@@ -117,6 +154,98 @@ def test_list_events_filters_half_open_interval(db_conn):
         events = list_events(cur, tstart=tstart, tstop=tstop)
 
     assert [event.external_id for event in events] == ["Fermi:middle", "Fermi:start"]
+
+
+def test_get_event_notices_returns_full_rows_in_published_order(db_conn):
+    earlier = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    later = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+    with db_conn.cursor() as cur:
+        event_id = insert_event(cur, external_id="Fermi:timeline-notices")
+        later_id = insert_notice_voevent(
+            cur,
+            event_id=event_id,
+            ivorn="ivo://nasa.gsfc.gcn/Fermi#timeline-notices-later",
+            topic="gcn.classic.voevent.FERMI_GBM_ALERT",
+            kafka_partition=1,
+            kafka_offset=2,
+            mission="Fermi",
+            instrument="GBM",
+            is_retraction=False,
+            published_at=later,
+            burst_datetime=later,
+            raw_uri="file:///tmp/timeline-notices-later.xml",
+        )
+        earlier_id = insert_notice_json(
+            cur,
+            event_id=event_id,
+            topic="gcn.notices.einstein_probe.wxt.alert",
+            kafka_partition=1,
+            kafka_offset=1,
+            mission="Einstein Probe",
+            instrument="WXT",
+            is_retraction=False,
+            published_at=earlier,
+            burst_datetime=earlier,
+            raw_uri="file:///tmp/timeline-notices-earlier.json",
+            ra=1,
+            dec=2,
+            err_radius=0.1,
+        )
+
+        notices = get_event_notices(cur, event_id)
+
+    assert [notice.id for notice in notices] == [earlier_id, later_id]
+    assert notices[0].event_id == event_id
+    assert notices[0].format == "json"
+    assert notices[0].raw_uri == "file:///tmp/timeline-notices-earlier.json"
+
+
+def test_get_event_conesearches_returns_full_rows_in_subject_order(db_conn):
+    earlier = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    later = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+    with db_conn.cursor() as cur:
+        event_id = insert_event(cur, external_id="Fermi:timeline-conesearches")
+        later_job_id = insert_job(cur, event_id=event_id, subject_time_start=later)
+        later_id = insert_conesearch(
+            cur,
+            event_id=event_id,
+            job_id=later_job_id,
+            broker="fink",
+            survey="ztf",
+            subject_time_start=later,
+            subject_time_end=later + timedelta(hours=1),
+            queried_at=later + timedelta(minutes=5),
+            ra=1,
+            dec=2,
+            radius_arcsec=3,
+            alert_count=0,
+            result_uri=None,
+        )
+        earlier_job_id = insert_job(cur, event_id=event_id, subject_time_start=earlier)
+        earlier_id = insert_conesearch(
+            cur,
+            event_id=event_id,
+            job_id=earlier_job_id,
+            broker="fink",
+            survey="ztf",
+            subject_time_start=earlier,
+            subject_time_end=earlier + timedelta(hours=1),
+            queried_at=earlier + timedelta(minutes=5),
+            ra=4,
+            dec=5,
+            radius_arcsec=6,
+            alert_count=1,
+            result_uri="file:///tmp/timeline-conesearches-earlier.json",
+        )
+
+        conesearches = get_event_conesearches(cur, event_id)
+
+    assert [conesearch.id for conesearch in conesearches] == [earlier_id, later_id]
+    assert conesearches[0].event_id == event_id
+    assert conesearches[0].job_id == earlier_job_id
+    assert conesearches[0].result_uri == "file:///tmp/timeline-conesearches-earlier.json"
 
 
 def test_insert_notice_voevent_is_idempotent_by_kafka_coordinates(db_conn):
