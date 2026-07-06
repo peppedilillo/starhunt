@@ -69,20 +69,8 @@ class Localization:
 
 
 @dataclass(frozen=True)
-class RowJob:
-    """Job metadata.
-
-    Attributes:
-        job_id: Job primary key.
-        event_id: Event primary key associated with the job.
-        job_type: Type of work to perform.
-        scheduled_at: Stable planned schedule time used as the localization cutoff.
-        run_after: Mutable worker eligibility time used for retries.
-        subject_time_start: Inclusive lower bound of the job subject window.
-        subject_time_end: Exclusive upper bound of the job subject window.
-        attempt_count: Number of attempts already started.
-        max_attempts: Maximum number of attempts before the job is marked dead.
-    """
+class Job:
+    """Job metadata."""
 
     job_id: int
     event_id: int
@@ -562,7 +550,7 @@ def insert_conesearch(
 def pick_job(
     cursor,
     worker_id: str,
-) -> RowJob | None:
+) -> Job | None:
     """Claim the next runnable job.
 
     ``run_after`` controls queue eligibility. ``scheduled_at`` is the stable
@@ -609,7 +597,7 @@ def pick_job(
     row = cursor.fetchone()
     if row is None:
         return None
-    return RowJob(*row)
+    return Job(*row)
 
 
 def claim_expired_jobs(
@@ -753,7 +741,7 @@ def mark_job_dead(cursor, job_id: int, message: str):
 
 def mark_job_failed(
     cursor,
-    job: RowJob,
+    job: Job,
     message: str,
     *,
     retry_delay: timedelta,
