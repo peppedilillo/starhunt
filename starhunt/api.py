@@ -80,7 +80,7 @@ def events(
         return list_events(cursor, tstart=tstart_utc, tstop=tstop_utc)
 
 
-@app.get("/timeline", response_model=list[Milestone])
+@app.get("/timeline/{event_id}", response_model=list[Milestone])
 def timeline(
     event_id: str,
     db_conn: Connection = Depends(get_db_conn),

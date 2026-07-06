@@ -182,12 +182,12 @@ def test_timeline_requires_event_id(db_conn):
 
     app.dependency_overrides.clear()
 
-    assert response.status_code == 422
+    assert response.status_code == 404
 
 
 def test_timeline_returns_404_for_unknown_event(db_conn):
     with client_for(db_conn) as client:
-        response = client.get("/timeline", params={"event_id": "Fermi:missing"})
+        response = client.get("/timeline/Fermi:missing")
 
     app.dependency_overrides.clear()
 
@@ -200,7 +200,7 @@ def test_timeline_returns_empty_array_for_event_without_milestones(db_conn):
         insert_event(cur, external_id="Fermi:empty-timeline")
 
     with client_for(db_conn) as client:
-        response = client.get("/timeline", params={"event_id": "Fermi:empty-timeline"})
+        response = client.get("/timeline/Fermi:empty-timeline")
 
     app.dependency_overrides.clear()
 
@@ -246,7 +246,7 @@ def test_timeline_returns_notice_and_conesearch_milestones_oldest_first(db_conn)
         )
 
     with client_for(db_conn) as client:
-        response = client.get("/timeline", params={"event_id": "Fermi:timeline"})
+        response = client.get("/timeline/Fermi:timeline")
 
     app.dependency_overrides.clear()
 
