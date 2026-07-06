@@ -270,6 +270,44 @@ def get_event_conesearches(cursor, event_id: int) -> list[RowConesearch]:
     return [RowConesearch(*row) for row in cursor.fetchall()]
 
 
+def get_conesearch(cursor, conesearch_id: int) -> RowConesearch | None:
+    """Return a cone-search row by primary key.
+
+    Args:
+        cursor: Database cursor.
+        conesearch_id: Cone-search primary key.
+
+    Returns:
+        The cone-search row, or None when absent.
+    """
+    cursor.execute(
+        """
+        SELECT
+            id,
+            event_id,
+            job_id,
+            broker,
+            survey,
+            subject_time_start,
+            subject_time_end,
+            queried_at,
+            ra,
+            dec,
+            radius_arcsec,
+            alert_count,
+            result_uri,
+            created_at
+        FROM conesearches
+        WHERE id = %s
+        """,
+        (conesearch_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    return RowConesearch(*row)
+
+
 def insert_event(cursor, external_id: str) -> int:
     """Insert an event and return its primary key.
 

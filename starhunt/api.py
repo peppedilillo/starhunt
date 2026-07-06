@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+import json
 from pathlib import Path
 from urllib.parse import unquote
 from urllib.parse import urlparse
@@ -14,6 +15,7 @@ from fastapi import HTTPException
 from psycopg import Connection
 
 from .db import get_event
+from .db import get_conesearch
 from .db import get_event_conesearches
 from .db import get_event_notices
 from .db import get_notice
@@ -170,4 +172,57 @@ def notice(
             "is_retraction": row.is_retraction,
         },
         "payload": payload.model_dump(mode="json"),
+    }
+
+
+@app.get("/conesearch/{conesearch_id}")
+def conesearch(
+    conesearch_id: int,
+    db_conn: Connection = Depends(get_db_conn),
+):
+    """Return one cone-search with metadata and parsed result payload.
+
+    The cone-search row supplies response metadata and the raw result URI. Empty
+    searches do not have result files and return an empty payload.
+
+    Args:
+        conesearch_id: Cone-search primary key.
+        db_conn: Database connection supplied by dependency injection.
+
+    Returns:
+        A mapping with ``metadata`` from the cone-search row and ``payload``
+        from parsing the stored JSON result file, or an empty list for
+        zero-alert searches.
+
+    Raises:
+        HTTPException: 404 when the cone-search row does not exist.
+        HTTPException: 500 when the stored result file is missing.
+    """
+    with db_conn.cursor() as cursor:
+        row = get_conesearch(cursor, conesearch_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Conesearch not found")
+
+    payload = []
+    if row.result_uri is not None:
+        result_path = _file_uri_path(row.result_uri)
+        if not result_path.exists():
+            raise HTTPException(status_code=500, detail="Conesearch result file not found")
+        payload = json.loads(result_path.read_bytes())
+
+    return {
+        "metadata": {
+            "event_id": row.event_id,
+            "job_id": row.job_id,
+            "broker": row.broker,
+            "survey": row.survey,
+            "subject_time_start": row.subject_time_start,
+            "subject_time_end": row.subject_time_end,
+            "queried_at": row.queried_at,
+            "ra": row.ra,
+            "dec": row.dec,
+            "radius_arcsec": row.radius_arcsec,
+            "alert_count": row.alert_count,
+        },
+        "payload": payload,
     }

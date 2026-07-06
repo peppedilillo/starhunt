@@ -1,6 +1,7 @@
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from pathlib import Path
 
 from conftest import fixture_paths
 from conftest import fixture_topic
@@ -12,6 +13,8 @@ from starhunt.db import insert_conesearch
 from starhunt.db import insert_event
 from starhunt.db import insert_notice_json
 from starhunt.db import insert_notice_voevent
+
+CONESEARCH_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "conesearches" / "sample.json"
 
 
 def fixture_for_topic(topic: str):
@@ -399,3 +402,123 @@ def test_notice_returns_500_when_payload_file_is_missing(db_conn, tmp_path):
 
     assert response.status_code == 500
     assert response.json() == {"detail": "Notice payload file not found"}
+
+
+def test_conesearch_returns_metadata_and_parsed_result_payload(db_conn, tmp_path):
+    result_path = tmp_path / CONESEARCH_FIXTURE.name
+    result_path.write_bytes(CONESEARCH_FIXTURE.read_bytes())
+    subject_time_start = datetime(2026, 1, 6, tzinfo=timezone.utc)
+    queried_at = subject_time_start + timedelta(minutes=5)
+
+    with db_conn.cursor() as cur:
+        event_id = insert_event(cur, external_id="Fermi:conesearch-result")
+        job_id = insert_job(cur, event_id=event_id, subject_time_start=subject_time_start)
+        conesearch_id = insert_conesearch(
+            cur,
+            event_id=event_id,
+            job_id=job_id,
+            broker="fink",
+            survey="ztf",
+            subject_time_start=subject_time_start,
+            subject_time_end=subject_time_start + timedelta(hours=1),
+            queried_at=queried_at,
+            ra=193.821,
+            dec=2.897,
+            radius_arcsec=180,
+            alert_count=1,
+            result_uri=result_path.resolve().as_uri(),
+        )
+
+    with client_for(db_conn) as client:
+        response = client.get(f"/conesearch/{conesearch_id}")
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["metadata"] == {
+        "event_id": event_id,
+        "job_id": job_id,
+        "broker": "fink",
+        "survey": "ztf",
+        "subject_time_start": "2026-01-06T00:00:00+00:00",
+        "subject_time_end": "2026-01-06T01:00:00+00:00",
+        "queried_at": "2026-01-06T00:05:00+00:00",
+        "ra": 193.821,
+        "dec": 2.897,
+        "radius_arcsec": 180.0,
+        "alert_count": 1,
+    }
+    assert body["payload"][0]["i:objectId"] == "ZTF21abfmbix"
+
+
+def test_conesearch_returns_empty_payload_for_zero_alert_search(db_conn):
+    subject_time_start = datetime(2026, 1, 7, tzinfo=timezone.utc)
+
+    with db_conn.cursor() as cur:
+        event_id = insert_event(cur, external_id="Fermi:conesearch-empty")
+        job_id = insert_job(cur, event_id=event_id, subject_time_start=subject_time_start)
+        conesearch_id = insert_conesearch(
+            cur,
+            event_id=event_id,
+            job_id=job_id,
+            broker="fink",
+            survey="ztf",
+            subject_time_start=subject_time_start,
+            subject_time_end=subject_time_start + timedelta(hours=1),
+            queried_at=subject_time_start + timedelta(minutes=5),
+            ra=10,
+            dec=20,
+            radius_arcsec=30,
+            alert_count=0,
+            result_uri=None,
+        )
+
+    with client_for(db_conn) as client:
+        response = client.get(f"/conesearch/{conesearch_id}")
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["payload"] == []
+
+
+def test_conesearch_returns_404_for_unknown_conesearch(db_conn):
+    with client_for(db_conn) as client:
+        response = client.get("/conesearch/999")
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Conesearch not found"}
+
+
+def test_conesearch_returns_500_when_result_file_is_missing(db_conn, tmp_path):
+    subject_time_start = datetime(2026, 1, 8, tzinfo=timezone.utc)
+
+    with db_conn.cursor() as cur:
+        event_id = insert_event(cur, external_id="Fermi:conesearch-missing-file")
+        job_id = insert_job(cur, event_id=event_id, subject_time_start=subject_time_start)
+        conesearch_id = insert_conesearch(
+            cur,
+            event_id=event_id,
+            job_id=job_id,
+            broker="fink",
+            survey="ztf",
+            subject_time_start=subject_time_start,
+            subject_time_end=subject_time_start + timedelta(hours=1),
+            queried_at=subject_time_start + timedelta(minutes=5),
+            ra=10,
+            dec=20,
+            radius_arcsec=30,
+            alert_count=1,
+            result_uri=(tmp_path / "missing.json").resolve().as_uri(),
+        )
+
+    with client_for(db_conn) as client:
+        response = client.get(f"/conesearch/{conesearch_id}")
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Conesearch result file not found"}
