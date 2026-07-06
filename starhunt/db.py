@@ -116,6 +116,30 @@ def get_event(cursor, external_id: str) -> RowEvent | None:
     return RowEvent(*row)
 
 
+def get_event_by_id(cursor, event_id: int) -> RowEvent | None:
+    """Return an event by primary key.
+
+    Args:
+        cursor: Database cursor.
+        event_id: Event primary key.
+
+    Returns:
+        The event row, or None when absent.
+    """
+    cursor.execute(
+        """
+        SELECT id, external_id, created_at
+        FROM events
+        WHERE id = %s
+        """,
+        (event_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    return RowEvent(*row)
+
+
 def list_events(
     cursor,
     *,

@@ -13,6 +13,7 @@ import pytest
 
 from starhunt.db import find_best_localization
 from starhunt.db import get_event
+from starhunt.db import get_event_by_id
 from starhunt.db import get_event_conesearches
 from starhunt.db import get_event_notices
 from starhunt.db import insert_conesearch
@@ -99,6 +100,27 @@ def test_get_event_returns_event_dataclass(db_conn):
         created_at=event.created_at,
     )
     assert isinstance(event.created_at, datetime)
+
+
+def test_get_event_by_id_returns_event_dataclass(db_conn):
+    with db_conn.cursor() as cur:
+        event_id = insert_event(cur, external_id="Fermi:test-existing-event-by-id")
+        event = get_event_by_id(cur, event_id=event_id)
+
+    assert event is not None
+    assert event == RowEvent(
+        id=event_id,
+        external_id="Fermi:test-existing-event-by-id",
+        created_at=event.created_at,
+    )
+    assert isinstance(event.created_at, datetime)
+
+
+def test_get_event_by_id_returns_none_for_missing_event(db_conn):
+    with db_conn.cursor() as cur:
+        event = get_event_by_id(cur, event_id=999)
+
+    assert event is None
 
 
 def test_list_events_returns_events_newest_first(db_conn):

@@ -30,7 +30,7 @@ def build_event_milestones(notices: list[RowNotice], conesearches: list[RowCones
     milestones = [Milestone(type="notice", time=notice.published_at, content=notice) for notice in notices]
     milestones.extend(
         Milestone(type="conesearch", time=conesearch.subject_time_start, content=conesearch)
-        for conesearch in conesearches
+        for conesearch in conesearches if conesearch.alert_count > 0
     )
 
     return sorted(

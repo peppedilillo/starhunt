@@ -6,16 +6,19 @@ from datetime import timedelta
 from datetime import timezone
 import json
 from pathlib import Path
+from typing import Annotated
 from urllib.parse import unquote
 from urllib.parse import urlparse
 
 from fastapi import Depends
 from fastapi import FastAPI
 from fastapi import HTTPException
+from fastapi import Path as ApiPath
+from fastapi import Query
 from psycopg import Connection
 
-from .db import get_event
 from .db import get_conesearch
+from .db import get_event_by_id
 from .db import get_event_conesearches
 from .db import get_event_notices
 from .db import get_notice
@@ -27,7 +30,7 @@ from .timeline import build_event_milestones
 from .timeline import Milestone
 from .utils import is_tz_aware
 
-app = FastAPI()
+app = FastAPI(title="Starhunt API")
 
 
 def get_db_conn() -> Iterator[Connection]:
@@ -68,29 +71,30 @@ def _file_uri_path(uri: str) -> Path:
     return Path(unquote(parsed.path))
 
 
-@app.get("/events", response_model=list[RowEvent])
+@app.get(
+    "/events",
+    response_model=list[RowEvent],
+    tags=["events"],
+    summary="List events",
+    description=(
+        "Return events sorted by creation time, newest first.\n\n"
+        "Use the optional UTC datetime bounds to restrict the event creation interval."
+    ),
+    response_description="Events matching the requested creation-time interval.",
+    responses={422: {"description": "Invalid datetime bound or inverted interval."}},
+)
 def events(
-    tstart: datetime | None = None,
-    tstop: datetime | None = None,
+    tstart: Annotated[
+        datetime | None,
+        Query(description="Inclusive UTC lower bound for event creation time."),
+    ] = None,
+    tstop: Annotated[
+        datetime | None,
+        Query(description="Exclusive UTC upper bound for event creation time."),
+    ] = None,
     db_conn: Connection = Depends(get_db_conn),
 ):
-    """Return events sorted by creation time, newest first.
-
-    Optional UTC datetime query parameters constrain the event ``created_at``
-    interval before rows are loaded from the database.
-
-    Args:
-        tstart: Optional inclusive UTC lower bound for event creation time.
-        tstop: Optional exclusive UTC upper bound for event creation time.
-        db_conn: Database connection supplied by dependency injection.
-
-    Returns:
-        Event rows matching the requested creation-time interval.
-
-    Raises:
-        HTTPException: 422 when a datetime bound is naive, non-UTC, or the
-            interval is inverted.
-    """
+    """Return event rows for the requested creation-time interval."""
     tstart_utc = _validate_utc_datetime(tstart, "tstart")
     tstop_utc = _validate_utc_datetime(tstop, "tstop")
     if tstart_utc is not None and tstop_utc is not None and tstart_utc > tstop_utc:
@@ -100,28 +104,22 @@ def events(
         return list_events(cursor, tstart=tstart_utc, tstop=tstop_utc)
 
 
-@app.get("/timeline/{event_id}", response_model=list[Milestone])
+@app.get(
+    "/timeline/{event_id}",
+    response_model=list[Milestone],
+    tags=["events"],
+    summary="Get event timeline",
+    description="Return notice and cone-search milestones for one event, ordered from oldest to newest.",
+    response_description="Timeline milestones for the event.",
+    responses={404: {"description": "Event not found."}},
+)
 def timeline(
-    event_id: str,
+    event_id: Annotated[int, ApiPath(description="Event primary key.")],
     db_conn: Connection = Depends(get_db_conn),
 ):
-    """Return milestones for an event external id.
-
-    The event id is resolved to the local event row before loading notice and
-    cone-search rows used to build the timeline.
-
-    Args:
-        event_id: Event external id.
-        db_conn: Database connection supplied by dependency injection.
-
-    Returns:
-        Notice and cone-search milestones ordered oldest first.
-
-    Raises:
-        HTTPException: 404 when the event external id does not exist.
-    """
+    """Return timeline milestones for one event."""
     with db_conn.cursor() as cursor:
-        event = get_event(cursor, external_id=event_id)
+        event = get_event_by_id(cursor, event_id=event_id)
         if event is None:
             raise HTTPException(status_code=404, detail="Event not found")
         notices = get_event_notices(cursor, event.id)
@@ -129,28 +127,22 @@ def timeline(
         return build_event_milestones(notices, conesearches)
 
 
-@app.get("/notice/{notice_id}")
+@app.get(
+    "/notice/{notice_id}",
+    tags=["artifacts"],
+    summary="Get notice payload",
+    description="Return one notice with selected metadata and the parsed raw notice payload.",
+    response_description="Notice metadata and parsed payload.",
+    responses={
+        404: {"description": "Notice not found."},
+        500: {"description": "Notice payload file not found."},
+    },
+)
 def notice(
-    notice_id: int,
+    notice_id: Annotated[int, ApiPath(description="Notice primary key.")],
     db_conn: Connection = Depends(get_db_conn),
 ):
-    """Return one notice with metadata and parsed raw payload.
-
-    The notice row supplies the response metadata, the raw payload URI, and the
-    topic-specific parser used to decode the payload from disk.
-
-    Args:
-        notice_id: Notice primary key.
-        db_conn: Database connection supplied by dependency injection.
-
-    Returns:
-        A mapping with ``metadata`` from the notice row and ``payload`` from
-        parsing the stored raw notice file.
-
-    Raises:
-        HTTPException: 404 when the notice row does not exist.
-        HTTPException: 500 when the stored raw payload file is missing.
-    """
+    """Return one parsed notice payload."""
     with db_conn.cursor() as cursor:
         row = get_notice(cursor, notice_id)
     if row is None:
@@ -175,29 +167,25 @@ def notice(
     }
 
 
-@app.get("/conesearch/{conesearch_id}")
+@app.get(
+    "/conesearch/{conesearch_id}",
+    tags=["artifacts"],
+    summary="Get cone-search result",
+    description=(
+        "Return one cone-search with selected metadata and the parsed JSON result payload. "
+        "Zero-alert searches return an empty payload list."
+    ),
+    response_description="Cone-search metadata and parsed result payload.",
+    responses={
+        404: {"description": "Conesearch not found."},
+        500: {"description": "Conesearch result file not found."},
+    },
+)
 def conesearch(
-    conesearch_id: int,
+    conesearch_id: Annotated[int, ApiPath(description="Cone-search primary key.")],
     db_conn: Connection = Depends(get_db_conn),
 ):
-    """Return one cone-search with metadata and parsed result payload.
-
-    The cone-search row supplies response metadata and the raw result URI. Empty
-    searches do not have result files and return an empty payload.
-
-    Args:
-        conesearch_id: Cone-search primary key.
-        db_conn: Database connection supplied by dependency injection.
-
-    Returns:
-        A mapping with ``metadata`` from the cone-search row and ``payload``
-        from parsing the stored JSON result file, or an empty list for
-        zero-alert searches.
-
-    Raises:
-        HTTPException: 404 when the cone-search row does not exist.
-        HTTPException: 500 when the stored result file is missing.
-    """
+    """Return one parsed cone-search result."""
     with db_conn.cursor() as cursor:
         row = get_conesearch(cursor, conesearch_id)
     if row is None:

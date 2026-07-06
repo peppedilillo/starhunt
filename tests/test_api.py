@@ -197,7 +197,7 @@ def test_timeline_requires_event_id(db_conn):
 
 def test_timeline_returns_404_for_unknown_event(db_conn):
     with client_for(db_conn) as client:
-        response = client.get("/timeline/Fermi:missing")
+        response = client.get("/timeline/999")
 
     app.dependency_overrides.clear()
 
@@ -205,12 +205,21 @@ def test_timeline_returns_404_for_unknown_event(db_conn):
     assert response.json() == {"detail": "Event not found"}
 
 
+def test_timeline_rejects_external_event_id(db_conn):
+    with client_for(db_conn) as client:
+        response = client.get("/timeline/Fermi:missing")
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+
+
 def test_timeline_returns_empty_array_for_event_without_milestones(db_conn):
     with db_conn.cursor() as cur:
-        insert_event(cur, external_id="Fermi:empty-timeline")
+        event_id = insert_event(cur, external_id="Fermi:empty-timeline")
 
     with client_for(db_conn) as client:
-        response = client.get("/timeline/Fermi:empty-timeline")
+        response = client.get(f"/timeline/{event_id}")
 
     app.dependency_overrides.clear()
 
@@ -256,7 +265,7 @@ def test_timeline_returns_notice_and_conesearch_milestones_oldest_first(db_conn)
         )
 
     with client_for(db_conn) as client:
-        response = client.get("/timeline/Fermi:timeline")
+        response = client.get(f"/timeline/{event_id}")
 
     app.dependency_overrides.clear()
 
@@ -276,6 +285,15 @@ def test_timeline_returns_notice_and_conesearch_milestones_oldest_first(db_conn)
     assert milestones[1]["content"]["format"] == "voevent"
     assert milestones[1]["content"]["raw_uri"] == "file:///tmp/timeline-notice.xml"
     assert "ivorn" not in milestones[1]["content"]
+
+
+def test_openapi_documents_timeline_event_id_as_primary_key():
+    app.openapi_schema = None
+    parameter = app.openapi()["paths"]["/timeline/{event_id}"]["get"]["parameters"][0]
+
+    assert parameter["name"] == "event_id"
+    assert parameter["description"] == "Event primary key."
+    assert parameter["schema"]["type"] == "integer"
 
 
 def test_notice_returns_metadata_and_parsed_voevent_payload(db_conn, tmp_path):

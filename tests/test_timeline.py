@@ -29,7 +29,12 @@ def make_notice(*, notice_id: int, published_at: datetime) -> RowNotice:
     )
 
 
-def make_conesearch(*, conesearch_id: int, subject_time_start: datetime) -> RowConesearch:
+def make_conesearch(
+    *,
+    conesearch_id: int,
+    subject_time_start: datetime,
+    alert_count: int = 1,
+) -> RowConesearch:
     return RowConesearch(
         id=conesearch_id,
         event_id=1,
@@ -42,8 +47,8 @@ def make_conesearch(*, conesearch_id: int, subject_time_start: datetime) -> RowC
         ra=1,
         dec=2,
         radius_arcsec=3,
-        alert_count=0,
-        result_uri=None,
+        alert_count=alert_count,
+        result_uri=f"file:///tmp/conesearch-{conesearch_id}.json" if alert_count > 0 else None,
         created_at=subject_time_start,
     )
 
@@ -93,4 +98,22 @@ def test_build_event_milestones_orders_ties_by_type_then_source_id():
         ("notice", 2),
         ("conesearch", 1),
         ("conesearch", 2),
+    ]
+
+
+def test_build_event_milestones_skips_zero_alert_conesearches():
+    notice_time = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    conesearch_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    milestones = build_event_milestones(
+        notices=[
+            make_notice(notice_id=1, published_at=notice_time),
+        ],
+        conesearches=[
+            make_conesearch(conesearch_id=1, subject_time_start=conesearch_time, alert_count=0),
+        ],
+    )
+
+    assert [(milestone.type, milestone.content.id) for milestone in milestones] == [
+        ("notice", 1),
     ]

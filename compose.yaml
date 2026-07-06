@@ -73,6 +73,8 @@ services:
       - "8000"
     ports:
       - "${STARHUNT_API_PORT}:8000"
+    volumes:
+      - ${STARHUNT_ARTIFACT_DIR:?STARHUNT_ARTIFACT_DIR is required}:/data/artifacts
     depends_on:
       postgres:
         condition: service_healthy
