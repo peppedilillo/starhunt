@@ -8,7 +8,7 @@ from psycopg import Connection
 
 
 @dataclass(frozen=True)
-class Event:
+class RowEvent:
     """Event row metadata."""
 
     id: int
@@ -17,7 +17,7 @@ class Event:
 
 
 @dataclass(frozen=True)
-class Notice:
+class RowNotice:
     """Notice row metadata."""
 
     id: int
@@ -40,7 +40,7 @@ class Notice:
 
 
 @dataclass(frozen=True)
-class Conesearch:
+class RowConesearch:
     """Cone-search row metadata."""
 
     id: int
@@ -69,7 +69,7 @@ class Localization:
 
 
 @dataclass(frozen=True)
-class Job:
+class RowJob:
     """Job metadata.
 
     Attributes:
@@ -87,10 +87,10 @@ class Job:
     job_id: int
     event_id: int
     job_type: str
-    scheduled_at: datetime
-    run_after: datetime
     subject_time_start: datetime
     subject_time_end: datetime
+    scheduled_at: datetime
+    run_after: datetime
     attempt_count: int
     max_attempts: int
 
@@ -110,7 +110,7 @@ def init_db_conn() -> Connection:
     )
 
 
-def get_event(cursor, external_id: str) -> Event | None:
+def get_event(cursor, external_id: str) -> RowEvent | None:
     """Return an event by external id.
 
     Args:
@@ -132,7 +132,7 @@ def get_event(cursor, external_id: str) -> Event | None:
     row = cursor.fetchone()
     if row is None:
         return None
-    return Event(*row)
+    return RowEvent(*row)
 
 
 def list_events(
@@ -140,7 +140,7 @@ def list_events(
     *,
     tstart: datetime | None = None,
     tstop: datetime | None = None,
-) -> list[Event]:
+) -> list[RowEvent]:
     """Return events ordered by creation time, newest first.
 
     Args:
@@ -170,10 +170,10 @@ def list_events(
         """,
         params,
     )
-    return [Event(*row) for row in cursor.fetchall()]
+    return [RowEvent(*row) for row in cursor.fetchall()]
 
 
-def get_event_notices(cursor, event_id: int) -> list[Notice]:
+def get_event_notices(cursor, event_id: int) -> list[RowNotice]:
     """Return notice rows for an event, ordered by publication time.
 
     Args:
@@ -209,10 +209,10 @@ def get_event_notices(cursor, event_id: int) -> list[Notice]:
         """,
         (event_id,),
     )
-    return [Notice(*row) for row in cursor.fetchall()]
+    return [RowNotice(*row) for row in cursor.fetchall()]
 
 
-def get_event_conesearches(cursor, event_id: int) -> list[Conesearch]:
+def get_event_conesearches(cursor, event_id: int) -> list[RowConesearch]:
     """Return cone-search rows for an event, ordered by subject time.
 
     Args:
@@ -245,7 +245,7 @@ def get_event_conesearches(cursor, event_id: int) -> list[Conesearch]:
         """,
         (event_id,),
     )
-    return [Conesearch(*row) for row in cursor.fetchall()]
+    return [RowConesearch(*row) for row in cursor.fetchall()]
 
 
 def insert_event(cursor, external_id: str) -> int:
@@ -562,7 +562,7 @@ def insert_conesearch(
 def pick_job(
     cursor,
     worker_id: str,
-) -> Job | None:
+) -> RowJob | None:
     """Claim the next runnable job.
 
     ``run_after`` controls queue eligibility. ``scheduled_at`` is the stable
@@ -597,10 +597,10 @@ def pick_job(
             job.id,
             job.event_id,
             job.job_type,
-            job.scheduled_at,
-            job.run_after,
             subject_time_start,
             subject_time_end,
+            job.scheduled_at,
+            job.run_after,
             job.attempt_count,
             job.max_attempts;
         """,
@@ -609,7 +609,7 @@ def pick_job(
     row = cursor.fetchone()
     if row is None:
         return None
-    return Job(*row)
+    return RowJob(*row)
 
 
 def claim_expired_jobs(
@@ -753,7 +753,7 @@ def mark_job_dead(cursor, job_id: int, message: str):
 
 def mark_job_failed(
     cursor,
-    job: Job,
+    job: RowJob,
     message: str,
     *,
     retry_delay: timedelta,

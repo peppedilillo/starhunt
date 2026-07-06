@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from .db import Conesearch
-from .db import Notice
+from .db import RowConesearch
+from .db import RowNotice
 
 
 @dataclass(frozen=True)
@@ -14,10 +14,10 @@ class Milestone:
 
     type: Literal["notice", "conesearch"]
     time: datetime
-    content: Notice | Conesearch
+    content: RowNotice | RowConesearch
 
 
-def build_event_milestones(notices: list[Notice], conesearches: list[Conesearch]) -> list[Milestone]:
+def build_event_milestones(notices: list[RowNotice], conesearches: list[RowConesearch]) -> list[Milestone]:
     """Build an event timeline from source rows.
 
     Args:

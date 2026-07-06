@@ -7,8 +7,8 @@ import psycopg
 import pytest
 
 from starhunt.consumer import insert_message
-from starhunt.consumer import parse_message
-from starhunt.consumer import PARSERS
+from starhunt.notices import normalize_notice
+from starhunt.notices import parse_notice
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures" / "notices"
@@ -90,11 +90,11 @@ def fixture_kafka_coordinates(path: Path):
 
 
 def parsed_notice(path: Path):
-    return PARSERS[fixture_topic(path)](path.read_bytes())
+    return parse_notice(path.read_bytes(), fixture_topic(path))
 
 
 def normalized_notice(path: Path):
-    return parse_message(FixtureMessage(fixture_topic(path), path.read_bytes()))
+    return normalize_notice(path.read_bytes(), fixture_topic(path))
 
 
 def event_external_id(path: Path):

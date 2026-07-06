@@ -11,7 +11,6 @@ from conftest import parsed_notice
 import psycopg
 import pytest
 
-from starhunt.db import Event
 from starhunt.db import find_best_localization
 from starhunt.db import get_event
 from starhunt.db import get_event_conesearches
@@ -23,6 +22,7 @@ from starhunt.db import insert_notice_voevent
 from starhunt.db import list_events
 from starhunt.db import Localization
 from starhunt.db import mark_retracted_notices
+from starhunt.db import RowEvent
 
 
 def insert_event_at(conn, *, external_id: str, created_at: datetime) -> int:
@@ -93,7 +93,7 @@ def test_get_event_returns_event_dataclass(db_conn):
         event = get_event(cur, external_id="Fermi:test-existing-event")
 
     assert event is not None
-    assert event == Event(
+    assert event == RowEvent(
         id=event_id,
         external_id="Fermi:test-existing-event",
         created_at=event.created_at,

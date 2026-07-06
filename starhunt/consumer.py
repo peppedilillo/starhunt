@@ -5,27 +5,15 @@
 - Schedule ZTF/Fink alert conesearch for new events.
 """
 
-from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
 import logging
 import os
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 
 from confluent_kafka import Message
 from gcn_kafka import Consumer
-from gcn_parser.ep import parse_einstein_probe_wxt
-from gcn_parser.fermi import parse_fermi_gbm_alert
-from gcn_parser.fermi import parse_fermi_gbm_fin_pos
-from gcn_parser.fermi import parse_fermi_gbm_flt_pos
-from gcn_parser.fermi import parse_fermi_gbm_gnd_pos
-from gcn_parser.svom import is_svom_retraction
-from gcn_parser.svom import parse_svom_eclairs
-from gcn_parser.svom import parse_svom_grm_trigger
-from gcn_parser.svom import parse_svom_mxt
-from gcn_parser.svom import parse_svom_retraction
-from gcn_parser.svom import SvomRetraction
 from psycopg import Connection
 
 from .db import get_event
@@ -33,8 +21,13 @@ from .db import init_db_conn
 from .db import insert_event
 from .db import insert_notice_json
 from .db import insert_notice_voevent
-from .db import Localization
 from .db import mark_retracted_notices
+from .notices import get_notice_format
+from .notices import normalize_notice
+from .notices import Notice
+from .notices import NoticeJSON
+from .notices import NoticeVOEvent
+from .notices import supported_topics
 from .utils import is_tz_aware
 
 DEFAULT_CONESEARCH_OFFSET = timedelta(hours=12)
@@ -42,78 +35,6 @@ DEFAULT_CONESEARCH_PERIOD = timedelta(hours=6)
 DEFAULT_CONESEARCH_TOTAL = 24
 DEFAULT_CONESEARCH_MAXRETRY = 3
 
-
-@dataclass
-class Topic:
-    """Kafka topic configuration.
-
-    Attributes:
-        topic: Kafka topic name.
-        suffix: File suffix used when persisting messages from the topic.
-        parser: Callable that parses message bytes into a notice object.
-    """
-
-    topic: str
-    suffix: str
-    parser: Callable
-
-
-@dataclass(frozen=True)
-class Notice:
-    """A normalized GCN notice."""
-
-    burst_id: str
-    localization: Localization | None
-    published_at: datetime
-    burst_datetime: datetime
-    mission: str
-    instrument: str
-    retractions: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class NoticeVOEvent(Notice):
-    """A normalized VOEvent notice."""
-
-    ivorn: str
-
-
-@dataclass(frozen=True)
-class NoticeJSON(Notice):
-    """A normalized JSON notice."""
-
-
-def parse_svom_grm_topic(value: bytes):
-    if is_svom_retraction(value):
-        return parse_svom_retraction(value)
-    return parse_svom_grm_trigger(value)
-
-
-def parse_svom_eclairs_topic(value: bytes):
-    if is_svom_retraction(value):
-        return parse_svom_retraction(value)
-    return parse_svom_eclairs(value)
-
-
-def parse_svom_mxt_topic(value: bytes):
-    if is_svom_retraction(value):
-        return parse_svom_retraction(value)
-    return parse_svom_mxt(value)
-
-
-TOPICS = [
-    Topic("gcn.classic.voevent.FERMI_GBM_ALERT", "xml", parse_fermi_gbm_alert),
-    Topic("gcn.classic.voevent.FERMI_GBM_FIN_POS", "xml", parse_fermi_gbm_fin_pos),
-    Topic("gcn.classic.voevent.FERMI_GBM_FLT_POS", "xml", parse_fermi_gbm_flt_pos),
-    Topic("gcn.classic.voevent.FERMI_GBM_GND_POS", "xml", parse_fermi_gbm_gnd_pos),
-    Topic("gcn.notices.svom.voevent.eclairs", "xml", parse_svom_eclairs_topic),
-    Topic("gcn.notices.svom.voevent.grm", "xml", parse_svom_grm_topic),
-    Topic("gcn.notices.svom.voevent.mxt", "xml", parse_svom_mxt_topic),
-    Topic("gcn.notices.einstein_probe.wxt.alert", "json", parse_einstein_probe_wxt),
-]
-
-SUFFIXES = {t.topic: t.suffix for t in TOPICS}
-PARSERS = {t.topic: t.parser for t in TOPICS}
 ZTF_CONESEARCH_JOB_TYPE = "ztf_fink_conesearch"
 logger = logging.getLogger(__name__)
 
@@ -162,100 +83,9 @@ def write_message(
         Path to the written message file.
     """
     topic = message.topic()
-    filepath = outdir / f"{topic}_{message.partition()}_{message.offset()}.{SUFFIXES[topic]}"
+    filepath = outdir / f"{topic}_{message.partition()}_{message.offset()}.{get_notice_format(topic)}"
     filepath.write_bytes(message.value())
     return filepath
-
-
-def notice_localization(ra: float | None, dec: float | None, err_radius: float | None) -> Localization | None:
-    """Normalize parsed notice coordinates into a localization struct."""
-    if ra is None or dec is None or err_radius is None or err_radius <= 0:
-        return None
-    return Localization(ra=ra, dec=dec, err_radius=err_radius)
-
-
-def parse_message(message: Message) -> Notice:
-    """Parse a Kafka message into a db-normalized notice shape."""
-    topic = message.topic()
-    parsed_notice = PARSERS[topic](message.value())
-
-    match topic:
-        case "gcn.classic.voevent.FERMI_GBM_ALERT":
-            return NoticeVOEvent(
-                ivorn=parsed_notice.ivorn,
-                burst_id=str(parsed_notice.trig_id),
-                localization=None,
-                published_at=parsed_notice.alert_datetime,
-                burst_datetime=parsed_notice.burst_datetime,
-                mission="Fermi",
-                instrument="GBM",
-                retractions=(),
-            )
-        case (
-            "gcn.classic.voevent.FERMI_GBM_FIN_POS"
-            | "gcn.classic.voevent.FERMI_GBM_FLT_POS"
-            | "gcn.classic.voevent.FERMI_GBM_GND_POS"
-        ):
-            localization = notice_localization(
-                parsed_notice.ra,
-                parsed_notice.dec,
-                parsed_notice.error_radius,
-            )
-            return NoticeVOEvent(
-                ivorn=parsed_notice.ivorn,
-                burst_id=str(parsed_notice.trig_id),
-                localization=localization,
-                published_at=parsed_notice.alert_datetime,
-                burst_datetime=parsed_notice.burst_datetime,
-                mission="Fermi",
-                instrument="GBM",
-                retractions=(),
-            )
-        case (
-            "gcn.notices.svom.voevent.eclairs"
-            | "gcn.notices.svom.voevent.grm"
-            | "gcn.notices.svom.voevent.mxt"
-        ):
-            localization = None
-            if isinstance(parsed_notice, SvomRetraction):
-                retractions = parsed_notice.retractions
-            else:
-                localization = notice_localization(
-                    parsed_notice.ra,
-                    parsed_notice.dec,
-                    parsed_notice.error_radius,
-                )
-                retractions = ()
-
-            return NoticeVOEvent(
-                ivorn=parsed_notice.ivorn,
-                burst_id=parsed_notice.burst_id,
-                localization=localization,
-                published_at=parsed_notice.alert_datetime,
-                burst_datetime=parsed_notice.burst_datetime,
-                mission="SVOM",
-                instrument=parsed_notice.instrument,
-                retractions=retractions,
-            )
-        case "gcn.notices.einstein_probe.wxt.alert":
-            if len(parsed_notice.id) != 1:
-                raise ValueError("Einstein Probe WXT notices must have exactly one id")
-            localization = notice_localization(
-                parsed_notice.ra,
-                parsed_notice.dec,
-                parsed_notice.ra_dec_error,
-            )
-            return NoticeJSON(
-                burst_id=parsed_notice.id[0],
-                localization=localization,
-                published_at=parsed_notice.trigger_time,
-                burst_datetime=parsed_notice.trigger_time,
-                mission="Einstein Probe",
-                instrument=parsed_notice.instrument,
-                retractions=(),
-            )
-        case _:
-            raise ValueError(f"Unsupported message topic: {topic}")
 
 
 def schedule_ztf_conesearch(
@@ -379,7 +209,7 @@ def insert_message(
         db_conn: Database connection used for the transaction.
     """
     topic = message.topic()
-    notice = parse_message(message)
+    notice = normalize_notice(message.value(), message.topic())
     is_retraction = bool(notice.retractions)
     # we annotate the mission for disambiguation: events are not mission-specific
     event_external_id = f"{notice.mission}:{notice.burst_id}"
@@ -455,7 +285,7 @@ def main(
     consumer = init_consumer(offset, group_id)
     db_conn = init_db_conn()
     try:
-        consumer.subscribe([t.topic for t in TOPICS])
+        consumer.subscribe(supported_topics())
         while True:
             for message in consumer.consume(timeout=1):
                 if message.error():

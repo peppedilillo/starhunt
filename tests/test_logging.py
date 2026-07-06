@@ -12,7 +12,7 @@ import pytest
 
 from starhunt import consumer
 from starhunt import worker
-from starhunt.db import Job
+from starhunt.db import RowJob
 from starhunt.logging import configure_logging
 from starhunt.logging import JsonFormatter
 
@@ -250,7 +250,7 @@ class FakeConsumer:
 
 def make_job(*, attempt_count=1, max_attempts=3, job_type=consumer.ZTF_CONESEARCH_JOB_TYPE):
     now = datetime.now(timezone.utc)
-    return Job(
+    return RowJob(
         job_id=17,
         event_id=23,
         job_type=job_type,

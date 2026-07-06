@@ -12,11 +12,15 @@ import pytest
 
 from starhunt import consumer
 from starhunt.consumer import DEFAULT_CONESEARCH_TOTAL
-from starhunt.consumer import NoticeJSON
-from starhunt.consumer import NoticeVOEvent
 from starhunt.consumer import schedule_ztf_conesearch
 from starhunt.consumer import ZTF_CONESEARCH_JOB_TYPE
 from starhunt.db import insert_event
+from starhunt.notices import get_notice_format
+from starhunt.notices import normalize_notice
+from starhunt.notices import NoticeJSON
+from starhunt.notices import NoticeVOEvent
+from starhunt.notices import supported_topics
+from starhunt.notices import UnsupportedTopic
 
 
 def table_counts(conn):
@@ -175,7 +179,7 @@ def test_consumer_main_initializes_and_closes_consumer(monkeypatch, tmp_path):
         "group_id": "group-1",
         "db_initialized": True,
     }
-    assert fake_consumer.subscribed_topics == [topic.topic for topic in consumer.TOPICS]
+    assert fake_consumer.subscribed_topics == supported_topics()
     assert fake_consumer.closed is True
     assert tmp_path.is_dir()
 
@@ -403,7 +407,16 @@ def test_localized_notice_stores_coordinates(db_conn):
     assert row[7] == path.resolve().as_uri()
 
 
-def test_parse_message_normalizes_svom_retraction():
+def test_notice_helpers_reject_unsupported_topic():
+    topic = "gcn.notices.unsupported"
+
+    with pytest.raises(UnsupportedTopic, match=f"Unsupported message topic: {topic}"):
+        get_notice_format(topic)
+    with pytest.raises(UnsupportedTopic, match=f"Unsupported message topic: {topic}"):
+        normalize_notice(b"", topic)
+
+
+def test_normalize_notice_normalizes_svom_retraction():
     path = next(path for path in fixture_paths() if normalized_notice(path).retractions)
     notice = normalized_notice(path)
     parsed = parsed_notice(path)
@@ -416,7 +429,7 @@ def test_parse_message_normalizes_svom_retraction():
     assert notice.retractions == parsed.retractions
 
 
-def test_parse_message_normalizes_einstein_probe_wxt_alert():
+def test_normalize_notice_normalizes_einstein_probe_wxt_alert():
     path = next(path for path in fixture_paths() if fixture_topic(path) == "gcn.notices.einstein_probe.wxt.alert")
     notice = normalized_notice(path)
     parsed = parsed_notice(path)

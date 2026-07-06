@@ -2,13 +2,13 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 
-from starhunt.db import Conesearch
-from starhunt.db import Notice
+from starhunt.db import RowConesearch
+from starhunt.db import RowNotice
 from starhunt.timeline import build_event_milestones
 
 
-def make_notice(*, notice_id: int, published_at: datetime) -> Notice:
-    return Notice(
+def make_notice(*, notice_id: int, published_at: datetime) -> RowNotice:
+    return RowNotice(
         id=notice_id,
         event_id=1,
         format="voevent",
@@ -29,8 +29,8 @@ def make_notice(*, notice_id: int, published_at: datetime) -> Notice:
     )
 
 
-def make_conesearch(*, conesearch_id: int, subject_time_start: datetime) -> Conesearch:
-    return Conesearch(
+def make_conesearch(*, conesearch_id: int, subject_time_start: datetime) -> RowConesearch:
+    return RowConesearch(
         id=conesearch_id,
         event_id=1,
         job_id=conesearch_id,

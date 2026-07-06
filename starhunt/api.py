@@ -10,12 +10,12 @@ from fastapi import FastAPI
 from fastapi import HTTPException
 from psycopg import Connection
 
-from .db import Event
 from .db import get_event
 from .db import get_event_conesearches
 from .db import get_event_notices
 from .db import init_db_conn
 from .db import list_events
+from .db import RowEvent
 from .timeline import build_event_milestones
 from .timeline import Milestone
 from .utils import is_tz_aware
@@ -55,7 +55,7 @@ def _validate_utc_datetime(value: datetime | None, name: str) -> datetime | None
     return value.astimezone(timezone.utc)
 
 
-@app.get("/events", response_model=list[Event])
+@app.get("/events", response_model=list[RowEvent])
 def events(
     tstart: datetime | None = None,
     tstop: datetime | None = None,
