@@ -6,6 +6,8 @@ import os
 import psycopg
 from psycopg import Connection
 
+from starhunt.astro import Localization
+
 
 @dataclass(frozen=True)
 class RowEvent:
@@ -57,15 +59,6 @@ class RowConesearch:
     alert_count: int
     result_uri: str | None
     created_at: datetime
-
-
-@dataclass(frozen=True)
-class Localization:
-    """Sky position and error radius, degrees."""
-
-    ra: float
-    dec: float
-    err_radius: float
 
 
 @dataclass(frozen=True)
@@ -198,6 +191,47 @@ def get_event_notices(cursor, event_id: int) -> list[RowNotice]:
         (event_id,),
     )
     return [RowNotice(*row) for row in cursor.fetchall()]
+
+
+def get_notice(cursor, notice_id: int) -> RowNotice | None:
+    """Return a notice row by primary key.
+
+    Args:
+        cursor: Database cursor.
+        notice_id: Notice primary key.
+
+    Returns:
+        The notice row, or None when absent.
+    """
+    cursor.execute(
+        """
+        SELECT
+            id,
+            event_id,
+            format,
+            topic,
+            kafka_partition,
+            kafka_offset,
+            mission,
+            instrument,
+            published_at,
+            burst_datetime,
+            ra,
+            dec,
+            err_radius,
+            raw_uri,
+            is_retraction,
+            retracted_by,
+            created_at
+        FROM notices
+        WHERE id = %s
+        """,
+        (notice_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    return RowNotice(*row)
 
 
 def get_event_conesearches(cursor, event_id: int) -> list[RowConesearch]:

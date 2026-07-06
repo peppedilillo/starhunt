@@ -2,13 +2,20 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 
+from conftest import fixture_paths
+from conftest import fixture_topic
 from fastapi.testclient import TestClient
 
 from starhunt.api import app
 from starhunt.api import get_db_conn
 from starhunt.db import insert_conesearch
 from starhunt.db import insert_event
+from starhunt.db import insert_notice_json
 from starhunt.db import insert_notice_voevent
+
+
+def fixture_for_topic(topic: str):
+    return next(path for path in fixture_paths() if fixture_topic(path) == topic)
 
 
 def insert_event_at(conn, *, external_id: str, created_at: datetime) -> int:
@@ -266,3 +273,129 @@ def test_timeline_returns_notice_and_conesearch_milestones_oldest_first(db_conn)
     assert milestones[1]["content"]["format"] == "voevent"
     assert milestones[1]["content"]["raw_uri"] == "file:///tmp/timeline-notice.xml"
     assert "ivorn" not in milestones[1]["content"]
+
+
+def test_notice_returns_metadata_and_parsed_voevent_payload(db_conn, tmp_path):
+    topic = "gcn.classic.voevent.FERMI_GBM_ALERT"
+    fixture = fixture_for_topic(topic)
+    raw_path = tmp_path / fixture.name
+    raw_path.write_bytes(fixture.read_bytes())
+    published_at = datetime(2026, 1, 3, tzinfo=timezone.utc)
+
+    with db_conn.cursor() as cur:
+        event_id = insert_event(cur, external_id="Fermi:notice-voevent")
+        notice_id = insert_notice_voevent(
+            cur,
+            event_id=event_id,
+            ivorn="ivo://nasa.gsfc.gcn/Fermi#notice-voevent",
+            topic=topic,
+            kafka_partition=1,
+            kafka_offset=10,
+            mission="Fermi",
+            instrument="GBM",
+            is_retraction=False,
+            published_at=published_at,
+            burst_datetime=published_at,
+            raw_uri=raw_path.resolve().as_uri(),
+        )
+
+    with client_for(db_conn) as client:
+        response = client.get(f"/notice/{notice_id}")
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["metadata"] == {
+        "event_id": event_id,
+        "format": "voevent",
+        "topic": topic,
+        "instrument": "GBM",
+        "mission": "Fermi",
+        "published_at": "2026-01-03T00:00:00+00:00",
+        "is_retraction": False,
+    }
+    assert body["payload"]["ivorn"].startswith("ivo://nasa.gsfc.gcn/Fermi#")
+    assert body["payload"]["trig_id"] is not None
+
+
+def test_notice_returns_metadata_and_parsed_json_payload(db_conn, tmp_path):
+    topic = "gcn.notices.einstein_probe.wxt.alert"
+    fixture = fixture_for_topic(topic)
+    raw_path = tmp_path / fixture.name
+    raw_path.write_bytes(fixture.read_bytes())
+    published_at = datetime(2026, 1, 4, tzinfo=timezone.utc)
+
+    with db_conn.cursor() as cur:
+        event_id = insert_event(cur, external_id="Einstein Probe:notice-json")
+        notice_id = insert_notice_json(
+            cur,
+            event_id=event_id,
+            topic=topic,
+            kafka_partition=1,
+            kafka_offset=11,
+            mission="Einstein Probe",
+            instrument="WXT",
+            is_retraction=False,
+            published_at=published_at,
+            burst_datetime=published_at,
+            raw_uri=raw_path.resolve().as_uri(),
+        )
+
+    with client_for(db_conn) as client:
+        response = client.get(f"/notice/{notice_id}")
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["metadata"] == {
+        "event_id": event_id,
+        "format": "json",
+        "topic": topic,
+        "instrument": "WXT",
+        "mission": "Einstein Probe",
+        "published_at": "2026-01-04T00:00:00+00:00",
+        "is_retraction": False,
+    }
+    assert body["payload"]["instrument"] == "WXT"
+    assert len(body["payload"]["id"]) == 1
+
+
+def test_notice_returns_404_for_unknown_notice(db_conn):
+    with client_for(db_conn) as client:
+        response = client.get("/notice/999")
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Notice not found"}
+
+
+def test_notice_returns_500_when_payload_file_is_missing(db_conn, tmp_path):
+    published_at = datetime(2026, 1, 5, tzinfo=timezone.utc)
+
+    with db_conn.cursor() as cur:
+        event_id = insert_event(cur, external_id="Fermi:notice-missing-file")
+        notice_id = insert_notice_voevent(
+            cur,
+            event_id=event_id,
+            ivorn="ivo://nasa.gsfc.gcn/Fermi#notice-missing-file",
+            topic="gcn.classic.voevent.FERMI_GBM_ALERT",
+            kafka_partition=1,
+            kafka_offset=12,
+            mission="Fermi",
+            instrument="GBM",
+            is_retraction=False,
+            published_at=published_at,
+            burst_datetime=published_at,
+            raw_uri=(tmp_path / "missing.xml").resolve().as_uri(),
+        )
+
+    with client_for(db_conn) as client:
+        response = client.get(f"/notice/{notice_id}")
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Notice payload file not found"}

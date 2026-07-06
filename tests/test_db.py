@@ -20,7 +20,7 @@ from starhunt.db import insert_event
 from starhunt.db import insert_notice_json
 from starhunt.db import insert_notice_voevent
 from starhunt.db import list_events
-from starhunt.db import Localization
+from starhunt.astro import Localization
 from starhunt.db import mark_retracted_notices
 from starhunt.db import RowEvent
 

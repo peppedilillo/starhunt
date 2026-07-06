@@ -14,7 +14,7 @@ from gcn_parser.svom import parse_svom_mxt
 from gcn_parser.svom import parse_svom_retraction
 from gcn_parser.svom import SvomRetraction
 
-from starhunt.db import Localization
+from starhunt.astro import Localization
 
 
 def _parse_svom_grm_topic(value: bytes):
@@ -86,7 +86,18 @@ def supported_topics() -> list[str]:
 
 
 def parse_notice(payload: bytes, topic: str):
-    """Parse a notice payload from a supported topic."""
+    """Parse a notice payload from a supported topic.
+
+    Args:
+        payload: the notice content, e.g. `message.value()`
+        topic: the notice topic, e.g. `message.topic()
+
+    Returns:
+        a `gcn_parser.Notice`.
+
+    Raises:
+        UnsupportedTopic: If the notice topic is not supported.
+    """
     try:
         parser = _PARSERS[topic]
     except KeyError as exc:
