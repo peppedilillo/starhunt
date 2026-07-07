@@ -20,11 +20,11 @@ from .db import claim_expired_jobs
 from .db import find_best_localization
 from .db import init_db_conn
 from .db import insert_conesearch
+from .db import Job
 from .db import mark_job_dead
 from .db import mark_job_failed
 from .db import mark_job_succeeded
 from .db import pick_job
-from .db import Job
 from .queries import conesearch_fink_ztf
 
 POLL_INTERVAL = 5

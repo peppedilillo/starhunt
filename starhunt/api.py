@@ -77,7 +77,7 @@ def _file_uri_path(uri: str) -> Path:
     tags=["events"],
     summary="List events",
     description=(
-        "Return events sorted by creation time, newest first.\n\n"
+        "Return events sorted by creation time, oldest first by default.\n\n"
         "Use the optional UTC datetime bounds to restrict the event creation interval."
     ),
     response_description="Events matching the requested creation-time interval.",
@@ -92,6 +92,10 @@ def events(
         datetime | None,
         Query(description="Exclusive UTC upper bound for event creation time."),
     ] = None,
+    newest_first: Annotated[
+        bool,
+        Query(description="Sort events newest to oldest instead of oldest to newest."),
+    ] = False,
     db_conn: Connection = Depends(get_db_conn),
 ):
     """Return event rows for the requested creation-time interval."""
@@ -101,7 +105,10 @@ def events(
         raise HTTPException(status_code=422, detail="tstart must be before or equal to tstop")
 
     with db_conn.cursor() as cursor:
-        return list_events(cursor, tstart=tstart_utc, tstop=tstop_utc)
+        events = list_events(cursor, tstart=tstart_utc, tstop=tstop_utc)
+        if newest_first:
+            return list(reversed(events))
+        return events
 
 
 @app.get(
@@ -109,12 +116,16 @@ def events(
     response_model=list[Milestone],
     tags=["events"],
     summary="Get event timeline",
-    description="Return notice and cone-search milestones for one event, ordered from oldest to newest.",
+    description="Return notice and survey cone-search milestones for one event.",
     response_description="Timeline milestones for the event.",
     responses={404: {"description": "Event not found."}},
 )
 def timeline(
     event_id: Annotated[int, ApiPath(description="Event primary key.")],
+    newest_first: Annotated[
+        bool,
+        Query(description="Sort milestones newest to oldest instead of oldest to newest."),
+    ] = False,
     db_conn: Connection = Depends(get_db_conn),
 ):
     """Return timeline milestones for one event."""
@@ -124,7 +135,10 @@ def timeline(
             raise HTTPException(status_code=404, detail="Event not found")
         notices = get_event_notices(cursor, event.id)
         conesearches = get_event_conesearches(cursor, event.id)
-        return build_event_milestones(notices, conesearches)
+        timeline = build_event_milestones(notices, conesearches)
+        if newest_first:
+            return list(reversed(timeline))
+        return timeline
 
 
 @app.get(

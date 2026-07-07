@@ -84,7 +84,7 @@ def test_events_returns_empty_array(db_conn):
     assert response.json() == []
 
 
-def test_events_returns_bare_array_newest_first(db_conn):
+def test_events_returns_bare_array_oldest_first(db_conn):
     older = datetime(2026, 1, 1, tzinfo=timezone.utc)
     newer = datetime(2026, 1, 2, tzinfo=timezone.utc)
     older_id = insert_event_at(db_conn, external_id="Fermi:older", created_at=older)
@@ -92,6 +92,32 @@ def test_events_returns_bare_array_newest_first(db_conn):
 
     with client_for(db_conn) as client:
         response = client.get("/events")
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "id": older_id,
+            "external_id": "Fermi:older",
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+        {
+            "id": newer_id,
+            "external_id": "Fermi:newer",
+            "created_at": "2026-01-02T00:00:00Z",
+        },
+    ]
+
+
+def test_events_returns_bare_array_newest_first_when_requested(db_conn):
+    older = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    newer = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    older_id = insert_event_at(db_conn, external_id="Fermi:older", created_at=older)
+    newer_id = insert_event_at(db_conn, external_id="Fermi:newer", created_at=newer)
+
+    with client_for(db_conn) as client:
+        response = client.get("/events", params={"newest_first": "true"})
 
     app.dependency_overrides.clear()
 
@@ -132,14 +158,14 @@ def test_events_filters_created_at_interval(db_conn):
     assert response.status_code == 200
     assert response.json() == [
         {
-            "id": middle_id,
-            "external_id": "Fermi:middle",
-            "created_at": "2026-01-03T00:00:00Z",
-        },
-        {
             "id": start_id,
             "external_id": "Fermi:start",
             "created_at": "2026-01-02T00:00:00Z",
+        },
+        {
+            "id": middle_id,
+            "external_id": "Fermi:middle",
+            "created_at": "2026-01-03T00:00:00Z",
         },
     ]
 
@@ -285,6 +311,59 @@ def test_timeline_returns_notice_and_conesearch_milestones_oldest_first(db_conn)
     assert milestones[1]["content"]["format"] == "voevent"
     assert milestones[1]["content"]["raw_uri"] == "file:///tmp/timeline-notice.xml"
     assert "ivorn" not in milestones[1]["content"]
+
+
+def test_timeline_returns_notice_and_conesearch_milestones_newest_first_when_requested(
+    db_conn,
+):
+    notice_time = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    conesearch_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    with db_conn.cursor() as cur:
+        event_id = insert_event(cur, external_id="Fermi:timeline-newest-first")
+        insert_notice_voevent(
+            cur,
+            event_id=event_id,
+            ivorn="ivo://nasa.gsfc.gcn/Fermi#timeline-newest-first",
+            topic="gcn.classic.voevent.FERMI_GBM_ALERT",
+            kafka_partition=1,
+            kafka_offset=1,
+            mission="Fermi",
+            instrument="GBM",
+            is_retraction=False,
+            published_at=notice_time,
+            burst_datetime=notice_time,
+            raw_uri="file:///tmp/timeline-newest-first-notice.xml",
+        )
+        job_id = insert_job(cur, event_id=event_id, subject_time_start=conesearch_time)
+        insert_conesearch(
+            cur,
+            event_id=event_id,
+            job_id=job_id,
+            broker="fink",
+            survey="ztf",
+            subject_time_start=conesearch_time,
+            subject_time_end=conesearch_time + timedelta(hours=1),
+            queried_at=conesearch_time + timedelta(minutes=5),
+            ra=1,
+            dec=2,
+            radius_arcsec=3,
+            alert_count=1,
+            result_uri="file:///tmp/timeline-newest-first-conesearch.json",
+        )
+
+    with client_for(db_conn) as client:
+        response = client.get(f"/timeline/{event_id}", params={"newest_first": "true"})
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    milestones = response.json()
+    assert [milestone["type"] for milestone in milestones] == ["notice", "conesearch"]
+    assert [milestone["time"] for milestone in milestones] == [
+        "2026-01-02T00:00:00Z",
+        "2026-01-01T00:00:00Z",
+    ]
 
 
 def test_openapi_documents_timeline_event_id_as_primary_key():

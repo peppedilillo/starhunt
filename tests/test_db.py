@@ -11,6 +11,7 @@ from conftest import parsed_notice
 import psycopg
 import pytest
 
+from starhunt.astro import Localization
 from starhunt.db import find_best_localization
 from starhunt.db import get_event
 from starhunt.db import get_event_by_id
@@ -21,7 +22,6 @@ from starhunt.db import insert_event
 from starhunt.db import insert_notice_json
 from starhunt.db import insert_notice_voevent
 from starhunt.db import list_events
-from starhunt.astro import Localization
 from starhunt.db import mark_retracted_notices
 from starhunt.db import RowEvent
 
@@ -123,7 +123,7 @@ def test_get_event_by_id_returns_none_for_missing_event(db_conn):
     assert event is None
 
 
-def test_list_events_returns_events_newest_first(db_conn):
+def test_list_events_returns_events_oldest_first(db_conn):
     oldest = datetime(2026, 1, 1, tzinfo=timezone.utc)
     newest = datetime(2026, 1, 3, tzinfo=timezone.utc)
 
@@ -135,9 +135,9 @@ def test_list_events_returns_events_newest_first(db_conn):
         events = list_events(cur)
 
     assert [event.external_id for event in events] == [
-        "Fermi:newest-b",
-        "Fermi:newest-a",
         "Fermi:oldest",
+        "Fermi:newest-a",
+        "Fermi:newest-b",
     ]
 
 
@@ -175,7 +175,7 @@ def test_list_events_filters_half_open_interval(db_conn):
     with db_conn.cursor() as cur:
         events = list_events(cur, tstart=tstart, tstop=tstop)
 
-    assert [event.external_id for event in events] == ["Fermi:middle", "Fermi:start"]
+    assert [event.external_id for event in events] == ["Fermi:start", "Fermi:middle"]
 
 
 def test_get_event_notices_returns_full_rows_in_published_order(db_conn):

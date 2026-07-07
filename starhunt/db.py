@@ -146,7 +146,7 @@ def list_events(
     tstart: datetime | None = None,
     tstop: datetime | None = None,
 ) -> list[RowEvent]:
-    """Return events ordered by creation time, newest first.
+    """Return events ordered by creation time.
 
     Args:
         cursor: Database cursor.
@@ -154,7 +154,7 @@ def list_events(
         tstop: Exclusive created_at upper bound.
 
     Returns:
-        Event rows in descending creation order.
+        Event rows in creation order.
     """
     where_clauses = []
     params = {}
@@ -171,7 +171,7 @@ def list_events(
         SELECT id, external_id, created_at
         FROM events
         {where_sql}
-        ORDER BY created_at DESC, id DESC
+        ORDER BY created_at ASC, id ASC
         """,
         params,
     )
