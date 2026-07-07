@@ -8,7 +8,7 @@ from conftest import fixture_topic
 from fastapi.testclient import TestClient
 
 from starhunt.api import app
-from starhunt.api import get_db_conn
+from starhunt.api.app import get_db_conn
 from starhunt.db import insert_conesearch
 from starhunt.db import insert_event
 from starhunt.db import insert_notice_json

@@ -4,14 +4,14 @@ from conftest import normalized_notice
 from conftest import parsed_notice
 from gcn_parser.ep import parse_einstein_probe_wxt
 
-from starhunt.notices import NoticeVOEvent
+from starhunt.notices import NormalizedNoticeVOEvent
 
 
 def notices_by_ivorn():
     notices = {}
     for path in fixture_paths():
         notice = normalized_notice(path)
-        if isinstance(notice, NoticeVOEvent):
+        if isinstance(notice, NormalizedNoticeVOEvent):
             notices[notice.ivorn] = path
     return notices
 

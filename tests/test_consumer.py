@@ -17,8 +17,8 @@ from starhunt.consumer import ZTF_CONESEARCH_JOB_TYPE
 from starhunt.db import insert_event
 from starhunt.notices import get_notice_format
 from starhunt.notices import normalize_notice
-from starhunt.notices import NoticeJSON
-from starhunt.notices import NoticeVOEvent
+from starhunt.notices import NormalizedNoticeJSON
+from starhunt.notices import NormalizedNoticeVOEvent
 from starhunt.notices import supported_topics
 from starhunt.notices import UnsupportedTopic
 
@@ -421,7 +421,7 @@ def test_normalize_notice_normalizes_svom_retraction():
     notice = normalized_notice(path)
     parsed = parsed_notice(path)
 
-    assert isinstance(notice, NoticeVOEvent)
+    assert isinstance(notice, NormalizedNoticeVOEvent)
     assert notice.mission == "SVOM"
     assert notice.localization is None
     assert notice.ivorn == parsed.ivorn
@@ -434,7 +434,7 @@ def test_normalize_notice_normalizes_einstein_probe_wxt_alert():
     notice = normalized_notice(path)
     parsed = parsed_notice(path)
 
-    assert isinstance(notice, NoticeJSON)
+    assert isinstance(notice, NormalizedNoticeJSON)
     assert notice.mission == "Einstein Probe"
     assert notice.instrument == "WXT"
     assert notice.burst_id == parsed.id[0]
@@ -451,13 +451,13 @@ def test_svom_retraction_marks_local_cited_notice(db_conn):
     trigger = next(
         path
         for path in fixture_paths()
-        if isinstance(normalized_notice(path), NoticeVOEvent)
+        if isinstance(normalized_notice(path), NormalizedNoticeVOEvent)
         and normalized_notice(path).ivorn == "ivo://org.svom/fsc#sb26043009_grm-trigger"
     )
     retraction = next(
         path
         for path in fixture_paths()
-        if isinstance(normalized_notice(path), NoticeVOEvent)
+        if isinstance(normalized_notice(path), NormalizedNoticeVOEvent)
         and normalized_notice(path).ivorn == "ivo://org.svom/fsc#sb26043009_retraction"
     )
 

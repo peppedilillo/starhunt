@@ -24,9 +24,9 @@ from .db import insert_notice_voevent
 from .db import mark_retracted_notices
 from .notices import get_notice_format
 from .notices import normalize_notice
-from .notices import Notice
-from .notices import NoticeJSON
-from .notices import NoticeVOEvent
+from .notices import NormalizedNotice
+from .notices import NormalizedNoticeJSON
+from .notices import NormalizedNoticeVOEvent
 from .notices import supported_topics
 from .utils import is_tz_aware
 
@@ -161,7 +161,7 @@ def schedule_ztf_conesearch(
 
 def insert_notice(
     cursor,
-    notice: Notice,
+    notice: NormalizedNotice,
     *,
     event_id: int,
     topic: str,
@@ -188,9 +188,9 @@ def insert_notice(
     }
 
     match notice:
-        case NoticeVOEvent(ivorn=ivorn):
+        case NormalizedNoticeVOEvent(ivorn=ivorn):
             return insert_notice_voevent(cursor, ivorn=ivorn, **notice_kwargs)
-        case NoticeJSON():
+        case NormalizedNoticeJSON():
             return insert_notice_json(cursor, **notice_kwargs)
         case _:
             raise TypeError(f"Unsupported normalized notice type: {type(notice).__name__}")

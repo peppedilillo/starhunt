@@ -14,7 +14,7 @@ from gcn_parser.svom import parse_svom_mxt
 from gcn_parser.svom import parse_svom_retraction
 from gcn_parser.svom import SvomRetraction
 
-from starhunt.astro import Localization
+from .astro import Localization
 
 
 def _parse_svom_grm_topic(value: bytes):
@@ -106,7 +106,7 @@ def parse_notice(payload: bytes, topic: str):
 
 
 @dataclass(frozen=True)
-class Notice:
+class NormalizedNotice:
     """A normalized GCN notice."""
 
     burst_id: str
@@ -119,18 +119,18 @@ class Notice:
 
 
 @dataclass(frozen=True)
-class NoticeVOEvent(Notice):
+class NormalizedNoticeVOEvent(NormalizedNotice):
     """A normalized VOEvent notice."""
 
     ivorn: str
 
 
 @dataclass(frozen=True)
-class NoticeJSON(Notice):
+class NormalizedNoticeJSON(NormalizedNotice):
     """A normalized JSON notice."""
 
 
-def normalize_notice(payload: bytes, topic: str) -> NoticeVOEvent | NoticeJSON:
+def normalize_notice(payload: bytes, topic: str) -> NormalizedNoticeVOEvent | NormalizedNoticeJSON:
     """
     Normalize a notice for ingestion.
 
@@ -155,7 +155,7 @@ def normalize_notice(payload: bytes, topic: str) -> NoticeVOEvent | NoticeJSON:
 
     match topic:
         case "gcn.classic.voevent.FERMI_GBM_ALERT":
-            return NoticeVOEvent(
+            return NormalizedNoticeVOEvent(
                 ivorn=parsed_notice.ivorn,
                 burst_id=str(parsed_notice.trig_id),
                 localization=None,
@@ -175,7 +175,7 @@ def normalize_notice(payload: bytes, topic: str) -> NoticeVOEvent | NoticeJSON:
                 parsed_notice.dec,
                 parsed_notice.error_radius,
             )
-            return NoticeVOEvent(
+            return NormalizedNoticeVOEvent(
                 ivorn=parsed_notice.ivorn,
                 burst_id=str(parsed_notice.trig_id),
                 localization=localization,
@@ -197,7 +197,7 @@ def normalize_notice(payload: bytes, topic: str) -> NoticeVOEvent | NoticeJSON:
                 )
                 retractions = ()
 
-            return NoticeVOEvent(
+            return NormalizedNoticeVOEvent(
                 ivorn=parsed_notice.ivorn,
                 burst_id=parsed_notice.burst_id,
                 localization=localization,
@@ -215,7 +215,7 @@ def normalize_notice(payload: bytes, topic: str) -> NoticeVOEvent | NoticeJSON:
                 parsed_notice.dec,
                 parsed_notice.ra_dec_error,
             )
-            return NoticeJSON(
+            return NormalizedNoticeJSON(
                 burst_id=parsed_notice.id[0],
                 localization=localization,
                 published_at=parsed_notice.trigger_time,

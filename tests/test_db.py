@@ -25,7 +25,7 @@ from starhunt.db import insert_notice_voevent
 from starhunt.db import list_events
 from starhunt.db import mark_retracted_notices
 from starhunt.db import RowEvent
-from starhunt.summary import EventSummary
+from starhunt.events import EventSummary
 
 
 def insert_event_at(conn, *, external_id: str, created_at: datetime) -> int:

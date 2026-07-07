@@ -6,8 +6,8 @@ import os
 import psycopg
 from psycopg import Connection
 
-from starhunt.astro import Localization
-from starhunt.summary import EventSummary
+from .astro import Localization
+from .events import EventSummary
 
 
 @dataclass(frozen=True)
