@@ -21,11 +21,11 @@ from .db import get_conesearch
 from .db import get_event_by_id
 from .db import get_event_conesearches
 from .db import get_event_notices
+from .db import get_events_summary
 from .db import get_notice
 from .db import init_db_conn
-from .db import list_events
-from .db import RowEvent
 from .notices import parse_notice
+from .summary import EventSummary
 from .timeline import build_event_milestones
 from .timeline import Milestone
 from .utils import is_tz_aware
@@ -73,14 +73,14 @@ def _file_uri_path(uri: str) -> Path:
 
 @app.get(
     "/events",
-    response_model=list[RowEvent],
+    response_model=list[EventSummary],
     tags=["events"],
     summary="List events",
     description=(
-        "Return events sorted by creation time, oldest first by default.\n\n"
+        "Return event summaries sorted by creation time, oldest first.\n\n"
         "Use the optional UTC datetime bounds to restrict the event creation interval."
     ),
-    response_description="Events matching the requested creation-time interval.",
+    response_description="Event summaries matching the requested creation-time interval.",
     responses={422: {"description": "Invalid datetime bound or inverted interval."}},
 )
 def events(
@@ -92,23 +92,16 @@ def events(
         datetime | None,
         Query(description="Exclusive UTC upper bound for event creation time."),
     ] = None,
-    newest_first: Annotated[
-        bool,
-        Query(description="Sort events newest to oldest instead of oldest to newest."),
-    ] = False,
     db_conn: Connection = Depends(get_db_conn),
 ):
-    """Return event rows for the requested creation-time interval."""
+    """Return event summaries for the requested creation-time interval."""
     tstart_utc = _validate_utc_datetime(tstart, "tstart")
     tstop_utc = _validate_utc_datetime(tstop, "tstop")
     if tstart_utc is not None and tstop_utc is not None and tstart_utc > tstop_utc:
         raise HTTPException(status_code=422, detail="tstart must be before or equal to tstop")
 
     with db_conn.cursor() as cursor:
-        events = list_events(cursor, tstart=tstart_utc, tstop=tstop_utc)
-        if newest_first:
-            return list(reversed(events))
-        return events
+        return get_events_summary(cursor, tstart=tstart_utc, tstop=tstop_utc)
 
 
 @app.get(
@@ -117,7 +110,7 @@ def events(
     tags=["events"],
     summary="Get event timeline",
     description=(
-        "Return notice and survey cone-search milestones for one event. "
+        "Return notice and survey cone-search milestones for one event, ordered oldest first. "
         "Notice milestones use published_at; cone-search milestones use queried_at."
     ),
     response_description="Timeline milestones for the event.",
@@ -125,10 +118,6 @@ def events(
 )
 def timeline(
     event_id: Annotated[int, ApiPath(description="Event primary key.")],
-    newest_first: Annotated[
-        bool,
-        Query(description="Sort milestones newest to oldest instead of oldest to newest."),
-    ] = False,
     db_conn: Connection = Depends(get_db_conn),
 ):
     """Return timeline milestones for one event."""
@@ -138,10 +127,7 @@ def timeline(
             raise HTTPException(status_code=404, detail="Event not found")
         notices = get_event_notices(cursor, event.id)
         conesearches = get_event_conesearches(cursor, event.id)
-        timeline = build_event_milestones(notices, conesearches)
-        if newest_first:
-            return list(reversed(timeline))
-        return timeline
+        return build_event_milestones(notices, conesearches)
 
 
 @app.get(

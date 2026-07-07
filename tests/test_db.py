@@ -17,6 +17,7 @@ from starhunt.db import get_event
 from starhunt.db import get_event_by_id
 from starhunt.db import get_event_conesearches
 from starhunt.db import get_event_notices
+from starhunt.db import get_events_summary
 from starhunt.db import insert_conesearch
 from starhunt.db import insert_event
 from starhunt.db import insert_notice_json
@@ -24,6 +25,7 @@ from starhunt.db import insert_notice_voevent
 from starhunt.db import list_events
 from starhunt.db import mark_retracted_notices
 from starhunt.db import RowEvent
+from starhunt.summary import EventSummary
 
 
 def insert_event_at(conn, *, external_id: str, created_at: datetime) -> int:
@@ -176,6 +178,188 @@ def test_list_events_filters_half_open_interval(db_conn):
         events = list_events(cur, tstart=tstart, tstop=tstop)
 
     assert [event.external_id for event in events] == ["Fermi:start", "Fermi:middle"]
+
+
+def test_get_events_summary_returns_empty_event_summary(db_conn):
+    created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    event_id = insert_event_at(db_conn, external_id="Fermi:summary-empty", created_at=created_at)
+
+    with db_conn.cursor() as cur:
+        summaries = get_events_summary(cur)
+
+    assert summaries == [
+        EventSummary(
+            id=event_id,
+            external_id="Fermi:summary-empty",
+            created_at=created_at,
+            last_updated=None,
+            notice_count=0,
+            conesearch_count=0,
+            latest_burst_datetime=None,
+            latest_localization=None,
+        )
+    ]
+
+
+def test_get_events_summary_counts_timeline_milestones(db_conn):
+    event_created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    notice_time = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    alert_conesearch_time = datetime(2026, 1, 4, tzinfo=timezone.utc)
+    empty_conesearch_time = datetime(2026, 1, 5, tzinfo=timezone.utc)
+    event_id = insert_event_at(db_conn, external_id="Fermi:summary-counts", created_at=event_created_at)
+
+    with db_conn.cursor() as cur:
+        insert_notice_voevent(
+            cur,
+            event_id=event_id,
+            ivorn="ivo://nasa.gsfc.gcn/Fermi#summary-counts",
+            topic="gcn.classic.voevent.FERMI_GBM_ALERT",
+            kafka_partition=1,
+            kafka_offset=1,
+            mission="Fermi",
+            instrument="GBM",
+            is_retraction=False,
+            published_at=notice_time,
+            burst_datetime=notice_time - timedelta(minutes=1),
+            raw_uri="file:///tmp/summary-counts.xml",
+        )
+        alert_job_id = insert_job(cur, event_id=event_id, subject_time_start=alert_conesearch_time)
+        insert_conesearch(
+            cur,
+            event_id=event_id,
+            job_id=alert_job_id,
+            broker="fink",
+            survey="ztf",
+            subject_time_start=alert_conesearch_time,
+            subject_time_end=alert_conesearch_time + timedelta(hours=1),
+            queried_at=alert_conesearch_time,
+            ra=1,
+            dec=2,
+            radius_arcsec=3,
+            alert_count=1,
+            result_uri="file:///tmp/summary-counts.json",
+        )
+        empty_job_id = insert_job(cur, event_id=event_id, subject_time_start=empty_conesearch_time)
+        insert_conesearch(
+            cur,
+            event_id=event_id,
+            job_id=empty_job_id,
+            broker="fink",
+            survey="ztf",
+            subject_time_start=empty_conesearch_time,
+            subject_time_end=empty_conesearch_time + timedelta(hours=1),
+            queried_at=empty_conesearch_time,
+            ra=1,
+            dec=2,
+            radius_arcsec=3,
+            alert_count=0,
+            result_uri=None,
+        )
+
+        summaries = get_events_summary(cur)
+
+    assert summaries[0].notice_count == 1
+    assert summaries[0].conesearch_count == 1
+    assert summaries[0].last_updated == alert_conesearch_time
+    assert summaries[0].latest_burst_datetime == notice_time - timedelta(minutes=1)
+
+
+def test_get_events_summary_returns_latest_unretracted_localization(db_conn):
+    event_created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    earlier = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    later = datetime(2026, 1, 3, tzinfo=timezone.utc)
+    retracted_at = datetime(2026, 1, 4, tzinfo=timezone.utc)
+    event_id = insert_event_at(db_conn, external_id="SVOM:summary-localization", created_at=event_created_at)
+
+    with db_conn.cursor() as cur:
+        insert_notice_voevent(
+            cur,
+            event_id=event_id,
+            ivorn="ivo://org.svom/fsc#summary-localization-earlier",
+            topic="gcn.notices.svom.voevent.eclairs",
+            kafka_partition=1,
+            kafka_offset=1,
+            mission="SVOM",
+            instrument="ECLAIRs",
+            is_retraction=False,
+            published_at=earlier,
+            burst_datetime=earlier,
+            raw_uri="file:///tmp/summary-localization-earlier.xml",
+            ra=1,
+            dec=2,
+            err_radius=0.1,
+        )
+        insert_notice_voevent(
+            cur,
+            event_id=event_id,
+            ivorn="ivo://org.svom/fsc#summary-localization-empty",
+            topic="gcn.notices.svom.voevent.eclairs",
+            kafka_partition=1,
+            kafka_offset=2,
+            mission="SVOM",
+            instrument="ECLAIRs",
+            is_retraction=False,
+            published_at=later,
+            burst_datetime=later,
+            raw_uri="file:///tmp/summary-localization-empty.xml",
+        )
+        retracted_notice_id = insert_notice_voevent(
+            cur,
+            event_id=event_id,
+            ivorn="ivo://org.svom/fsc#summary-localization-retracted",
+            topic="gcn.notices.svom.voevent.eclairs",
+            kafka_partition=1,
+            kafka_offset=3,
+            mission="SVOM",
+            instrument="ECLAIRs",
+            is_retraction=False,
+            published_at=later + timedelta(minutes=1),
+            burst_datetime=later,
+            raw_uri="file:///tmp/summary-localization-retracted.xml",
+            ra=3,
+            dec=4,
+            err_radius=0.2,
+        )
+        retraction_id = insert_notice_voevent(
+            cur,
+            event_id=event_id,
+            ivorn="ivo://org.svom/fsc#summary-localization-retraction",
+            topic="gcn.notices.svom.voevent.eclairs",
+            kafka_partition=1,
+            kafka_offset=4,
+            mission="SVOM",
+            instrument="ECLAIRs",
+            is_retraction=True,
+            published_at=retracted_at,
+            burst_datetime=later,
+            raw_uri="file:///tmp/summary-localization-retraction.xml",
+        )
+        mark_retracted_notices(
+            cur,
+            event_id=event_id,
+            retraction_notice_id=retraction_id,
+            target_ivorns=("ivo://org.svom/fsc#summary-localization-retracted",),
+        )
+        assert retracted_notice_id is not None
+
+        summaries = get_events_summary(cur)
+
+    assert summaries[0].latest_localization == Localization(ra=1, dec=2, err_radius=0.1)
+
+
+def test_get_events_summary_filters_event_created_at_interval(db_conn):
+    tstart = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    tstop = datetime(2026, 1, 4, tzinfo=timezone.utc)
+
+    insert_event_at(db_conn, external_id="Fermi:summary-before", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    insert_event_at(db_conn, external_id="Fermi:summary-start", created_at=tstart)
+    insert_event_at(db_conn, external_id="Fermi:summary-middle", created_at=datetime(2026, 1, 3, tzinfo=timezone.utc))
+    insert_event_at(db_conn, external_id="Fermi:summary-stop", created_at=tstop)
+
+    with db_conn.cursor() as cur:
+        summaries = get_events_summary(cur, tstart=tstart, tstop=tstop)
+
+    assert [summary.external_id for summary in summaries] == ["Fermi:summary-start", "Fermi:summary-middle"]
 
 
 def test_get_event_notices_returns_full_rows_in_published_order(db_conn):

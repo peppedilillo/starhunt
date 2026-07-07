@@ -7,6 +7,7 @@ import psycopg
 from psycopg import Connection
 
 from starhunt.astro import Localization
+from starhunt.summary import EventSummary
 
 
 @dataclass(frozen=True)
@@ -176,6 +177,135 @@ def list_events(
         params,
     )
     return [RowEvent(*row) for row in cursor.fetchall()]
+
+
+def get_events_summary(
+    cursor,
+    *,
+    tstart: datetime | None = None,
+    tstop: datetime | None = None,
+) -> list[EventSummary]:
+    """Return event summaries ordered by creation time.
+
+    Args:
+        cursor: Database cursor.
+        tstart: Inclusive created_at lower bound.
+        tstop: Exclusive created_at upper bound.
+
+    Returns:
+        Event summaries in creation order.
+    """
+    where_clauses = []
+    params = {}
+    if tstart is not None:
+        where_clauses.append("created_at >= %(tstart)s")
+        params["tstart"] = tstart
+    if tstop is not None:
+        where_clauses.append("created_at < %(tstop)s")
+        params["tstop"] = tstop
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+    cursor.execute(
+        f"""
+        WITH filtered_events AS (
+            SELECT id, external_id, created_at
+            FROM events
+            {where_sql}
+        ),
+        milestones AS (
+            SELECT
+                notices.event_id,
+                notices.published_at AS happened_at,
+                'notice' AS milestone_type
+            FROM notices
+            JOIN filtered_events
+                ON filtered_events.id = notices.event_id
+
+            UNION ALL
+
+            SELECT
+                conesearches.event_id,
+                conesearches.queried_at AS happened_at,
+                'conesearch' AS milestone_type
+            FROM conesearches
+            JOIN filtered_events
+                ON filtered_events.id = conesearches.event_id
+            WHERE conesearches.alert_count > 0
+        ),
+        milestone_summary AS (
+            SELECT
+                event_id,
+                max(happened_at) AS last_updated,
+                count(*) FILTER (WHERE milestone_type = 'notice') AS notice_count,
+                count(*) FILTER (WHERE milestone_type = 'conesearch') AS conesearch_count
+            FROM milestones
+            GROUP BY event_id
+        )
+        SELECT
+            filtered_events.id,
+            filtered_events.external_id,
+            filtered_events.created_at,
+            milestone_summary.last_updated,
+            coalesce(milestone_summary.notice_count, 0) AS notice_count,
+            coalesce(milestone_summary.conesearch_count, 0) AS conesearch_count,
+            latest_notice.burst_datetime AS latest_burst_datetime,
+            latest_localization.ra,
+            latest_localization.dec,
+            latest_localization.err_radius
+        FROM filtered_events
+        LEFT JOIN milestone_summary
+            ON milestone_summary.event_id = filtered_events.id
+        LEFT JOIN LATERAL (
+            SELECT burst_datetime
+            FROM notices
+            WHERE notices.event_id = filtered_events.id
+            ORDER BY published_at DESC, id DESC
+            LIMIT 1
+        ) AS latest_notice ON true
+        LEFT JOIN LATERAL (
+            SELECT ra, dec, err_radius
+            FROM notices
+            WHERE notices.event_id = filtered_events.id
+                AND retracted_by IS NULL
+                AND ra IS NOT NULL
+                AND dec IS NOT NULL
+                AND err_radius IS NOT NULL
+            ORDER BY published_at DESC, id DESC
+            LIMIT 1
+        ) AS latest_localization ON true
+        ORDER BY filtered_events.created_at ASC, filtered_events.id ASC
+        """,
+        params,
+    )
+    summaries = []
+    for (
+        event_id,
+        external_id,
+        created_at,
+        last_updated,
+        notice_count,
+        conesearch_count,
+        latest_burst_datetime,
+        ra,
+        dec,
+        err_radius,
+    ) in cursor.fetchall():
+        latest_localization = None
+        if ra is not None:
+            latest_localization = Localization(ra=ra, dec=dec, err_radius=err_radius)
+        summaries.append(
+            EventSummary(
+                id=event_id,
+                external_id=external_id,
+                created_at=created_at,
+                last_updated=last_updated,
+                notice_count=notice_count,
+                conesearch_count=conesearch_count,
+                latest_burst_datetime=latest_burst_datetime,
+                latest_localization=latest_localization,
+            )
+        )
+    return summaries
 
 
 def get_event_notices(cursor, event_id: int) -> list[RowNotice]:

@@ -1,3 +1,4 @@
+from typing import Literal
 from dataclasses import dataclass
 
 
@@ -8,3 +9,4 @@ class Localization:
     ra: float
     dec: float
     err_radius: float
+    units: Literal["degrees", "radians"] = "degrees"
