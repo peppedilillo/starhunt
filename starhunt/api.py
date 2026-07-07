@@ -116,7 +116,10 @@ def events(
     response_model=list[Milestone],
     tags=["events"],
     summary="Get event timeline",
-    description="Return notice and survey cone-search milestones for one event.",
+    description=(
+        "Return notice and survey cone-search milestones for one event. "
+        "Notice milestones use published_at; cone-search milestones use queried_at."
+    ),
     response_description="Timeline milestones for the event.",
     responses={404: {"description": "Event not found."}},
 )

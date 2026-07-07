@@ -33,8 +33,12 @@ def make_conesearch(
     *,
     conesearch_id: int,
     subject_time_start: datetime,
+    queried_at: datetime | None = None,
     alert_count: int = 1,
 ) -> RowConesearch:
+    if queried_at is None:
+        queried_at = subject_time_start + timedelta(minutes=5)
+
     return RowConesearch(
         id=conesearch_id,
         event_id=1,
@@ -43,7 +47,7 @@ def make_conesearch(
         survey="ztf",
         subject_time_start=subject_time_start,
         subject_time_end=subject_time_start + timedelta(hours=1),
-        queried_at=subject_time_start + timedelta(minutes=5),
+        queried_at=queried_at,
         ra=1,
         dec=2,
         radius_arcsec=3,
@@ -73,7 +77,7 @@ def test_build_event_milestones_merges_oldest_first():
     )
 
     assert [(milestone.type, milestone.time, milestone.content.id) for milestone in milestones] == [
-        ("conesearch", earliest, 1),
+        ("conesearch", earliest + timedelta(minutes=5), 1),
         ("notice", middle, 1),
         ("notice", latest, 2),
     ]
@@ -88,8 +92,8 @@ def test_build_event_milestones_orders_ties_by_type_then_source_id():
             make_notice(notice_id=1, published_at=tied),
         ],
         conesearches=[
-            make_conesearch(conesearch_id=2, subject_time_start=tied),
-            make_conesearch(conesearch_id=1, subject_time_start=tied),
+            make_conesearch(conesearch_id=2, subject_time_start=tied, queried_at=tied),
+            make_conesearch(conesearch_id=1, subject_time_start=tied, queried_at=tied),
         ],
     )
 

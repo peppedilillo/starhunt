@@ -20,6 +20,9 @@ class Milestone:
 def build_event_milestones(notices: list[RowNotice], conesearches: list[RowConesearch]) -> list[Milestone]:
     """Build an event timeline from source rows.
 
+    Notice milestones are timed by ``published_at``. Cone-search milestones are
+    timed by ``queried_at`` and only emitted when the search returned alerts.
+
     Args:
         notices: Notice rows for the event.
         conesearches: Cone-search rows for the event.
@@ -29,7 +32,7 @@ def build_event_milestones(notices: list[RowNotice], conesearches: list[RowCones
     """
     milestones = [Milestone(type="notice", time=notice.published_at, content=notice) for notice in notices]
     milestones.extend(
-        Milestone(type="conesearch", time=conesearch.subject_time_start, content=conesearch)
+        Milestone(type="conesearch", time=conesearch.queried_at, content=conesearch)
         for conesearch in conesearches
         if conesearch.alert_count > 0
     )

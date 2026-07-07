@@ -299,7 +299,7 @@ def test_timeline_returns_notice_and_conesearch_milestones_oldest_first(db_conn)
     milestones = response.json()
     assert [milestone["type"] for milestone in milestones] == ["conesearch", "notice"]
     assert [milestone["time"] for milestone in milestones] == [
-        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:05:00Z",
         "2026-01-02T00:00:00Z",
     ]
     assert milestones[0]["content"]["id"] == conesearch_id
@@ -362,7 +362,7 @@ def test_timeline_returns_notice_and_conesearch_milestones_newest_first_when_req
     assert [milestone["type"] for milestone in milestones] == ["notice", "conesearch"]
     assert [milestone["time"] for milestone in milestones] == [
         "2026-01-02T00:00:00Z",
-        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:05:00Z",
     ]
 
 
