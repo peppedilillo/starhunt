@@ -6,7 +6,7 @@ from datetime import timedelta
 from datetime import timezone
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import unquote
 from urllib.parse import urlparse
 
@@ -17,6 +17,7 @@ from fastapi import Path as ApiPath
 from fastapi import Query
 from psycopg import Connection
 
+from ..conesearches import conesearch_metadata
 from ..db import get_conesearch
 from ..db import get_event_by_id
 from ..db import get_event_conesearches
@@ -24,11 +25,14 @@ from ..db import get_event_notices
 from ..db import get_events_summary
 from ..db import get_notice
 from ..db import init_db_conn
+from ..notices import notice_metadata
 from ..notices import parse_notice
 from ..timeline import build_event_milestones
 from ..utils import is_tz_aware
+from .responses import ConesearchResponse
 from .responses import EventSummary
 from .responses import Milestone
+from .responses import NoticeResponse
 
 app = FastAPI(title="Starhunt API")
 
@@ -132,9 +136,10 @@ def timeline(
 
 @app.get(
     "/notice/{notice_id}",
+    response_model=NoticeResponse,
     tags=["artifacts"],
     summary="Get notice payload",
-    description="Return one notice with selected metadata and the parsed raw notice payload.",
+    description="Return one notice with selected metadata and the parsed stored notice payload.",
     response_description="Notice metadata and parsed payload.",
     responses={
         404: {"description": "Notice not found."},
@@ -156,22 +161,15 @@ def notice(
         raise HTTPException(status_code=500, detail="Notice payload file not found")
 
     payload = parse_notice(payload_path.read_bytes(), row.topic)
-    return {
-        "metadata": {
-            "event_id": row.event_id,
-            "format": row.format,
-            "topic": row.topic,
-            "instrument": row.instrument,
-            "mission": row.mission,
-            "published_at": row.published_at,
-            "is_retraction": row.is_retraction,
-        },
-        "payload": payload.model_dump(mode="json"),
-    }
+    return NoticeResponse(
+        metadata=notice_metadata(row),
+        payload=payload.model_dump(mode="json"),
+    )
 
 
 @app.get(
     "/conesearch/{conesearch_id}",
+    response_model=ConesearchResponse,
     tags=["artifacts"],
     summary="Get cone-search result",
     description=(
@@ -194,26 +192,14 @@ def conesearch(
     if row is None:
         raise HTTPException(status_code=404, detail="Conesearch not found")
 
-    payload = []
+    payload: list[dict[str, Any]] = []
     if row.result_uri is not None:
         result_path = _file_uri_path(row.result_uri)
         if not result_path.exists():
             raise HTTPException(status_code=500, detail="Conesearch result file not found")
         payload = json.loads(result_path.read_bytes())
 
-    return {
-        "metadata": {
-            "event_id": row.event_id,
-            "job_id": row.job_id,
-            "broker": row.broker,
-            "survey": row.survey,
-            "subject_time_start": row.subject_time_start,
-            "subject_time_end": row.subject_time_end,
-            "queried_at": row.queried_at,
-            "ra": row.ra,
-            "dec": row.dec,
-            "radius_arcsec": row.radius_arcsec,
-            "alert_count": row.alert_count,
-        },
-        "payload": payload,
-    }
+    return ConesearchResponse(
+        metadata=conesearch_metadata(row),
+        payload=payload,
+    )

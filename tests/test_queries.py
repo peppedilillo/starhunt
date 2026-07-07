@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from starhunt.queries import conesearch_fink_ztf
+from starhunt.conesearches import conesearch_fink_ztf
 
 UTC = timezone.utc
 

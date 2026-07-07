@@ -1,7 +1,7 @@
 """Consume GCN notices and schedule follow-up jobs.
 
 - Poll supported Kafka topics.
-- Store raw notices on disk and summaries in the database.
+- Store raw notices on disk and normalized notice metadata in the database.
 - Schedule ZTF/Fink alert conesearch for new events.
 """
 

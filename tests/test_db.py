@@ -11,7 +11,7 @@ from conftest import parsed_notice
 import psycopg
 import pytest
 
-from starhunt.astro import Localization
+from starhunt.astro import ConeRegion
 from starhunt.db import find_best_localization
 from starhunt.db import get_event
 from starhunt.db import get_event_by_id
@@ -344,7 +344,7 @@ def test_get_events_summary_returns_latest_unretracted_localization(db_conn):
 
         summaries = get_events_summary(cur)
 
-    assert summaries[0].latest_localization == Localization(ra=1, dec=2, err_radius=0.1)
+    assert summaries[0].latest_localization == ConeRegion(ra=1, dec=2, err_radius=0.1)
 
 
 def test_get_events_summary_filters_event_created_at_interval(db_conn):
@@ -621,12 +621,12 @@ def test_find_best_localization_returns_latest_usable_localization(db_conn):
             cutoff_at=latest_normalized.published_at + timedelta(seconds=1),
         )
 
-    assert localization == Localization(
+    assert localization == ConeRegion(
         ra=latest_notice.ra,
         dec=latest_notice.dec,
         err_radius=latest_notice.error_radius,
     )
-    assert localization != Localization(
+    assert localization != ConeRegion(
         ra=earlier_notice.ra,
         dec=earlier_notice.dec,
         err_radius=earlier_notice.error_radius,
@@ -653,7 +653,7 @@ def test_find_best_localization_ignores_future_publications(db_conn):
             cutoff_at=later_normalized.published_at - timedelta(seconds=1),
         )
 
-    assert localization == Localization(
+    assert localization == ConeRegion(
         ra=earlier_notice.ra,
         dec=earlier_notice.dec,
         err_radius=earlier_notice.error_radius,
@@ -714,7 +714,7 @@ def test_find_best_localization_ignores_conesearch_coordinates(db_conn):
             cutoff_at=normalized.published_at + timedelta(hours=2),
         )
 
-    assert localization == Localization(
+    assert localization == ConeRegion(
         ra=notice.ra,
         dec=notice.dec,
         err_radius=notice.error_radius,
@@ -818,4 +818,4 @@ def test_find_best_localization_keeps_localization_retracted_after_cutoff(db_con
 
         localization = find_best_localization(cur, event_id, cutoff_at=cutoff_at)
 
-    assert localization == Localization(ra=1, dec=2, err_radius=0.1)
+    assert localization == ConeRegion(ra=1, dec=2, err_radius=0.1)

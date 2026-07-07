@@ -1,14 +1,14 @@
-"""Summary read models."""
+"""API event summary models."""
 
 from dataclasses import dataclass
 from datetime import datetime
 
-from .astro import Localization
+from .astro import ConeRegion
 
 
 @dataclass(frozen=True)
 class EventSummary:
-    """Event summary for list views."""
+    """Public event summary returned by the events endpoint."""
 
     id: int
     external_id: str
@@ -17,4 +17,4 @@ class EventSummary:
     notice_count: int
     conesearch_count: int
     latest_burst_datetime: datetime | None
-    latest_localization: Localization | None
+    latest_localization: ConeRegion | None

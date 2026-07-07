@@ -15,6 +15,7 @@ import uuid
 
 from psycopg import Connection
 
+from .conesearches import conesearch_fink_ztf
 from .consumer import ZTF_CONESEARCH_JOB_TYPE
 from .db import claim_expired_jobs
 from .db import find_best_localization
@@ -25,7 +26,6 @@ from .db import mark_job_dead
 from .db import mark_job_failed
 from .db import mark_job_succeeded
 from .db import pick_job
-from .queries import conesearch_fink_ztf
 
 POLL_INTERVAL = 5
 DEFAULT_JOB_RETRY_DELAY = timedelta(hours=12)

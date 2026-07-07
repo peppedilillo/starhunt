@@ -3,10 +3,10 @@ from typing import Literal
 
 
 @dataclass(frozen=True)
-class Localization:
-    """Sky position and error radius, in degrees."""
+class ConeRegion:
+    """Circular sky region with coordinates in degrees."""
 
     ra: float
     dec: float
     err_radius: float
-    units: Literal["degrees", "radians"] = "degrees"
+    units: Literal["degrees"] = "degrees"

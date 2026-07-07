@@ -1,3 +1,5 @@
+"""Cone-search client helpers and API metadata models."""
+
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone
@@ -6,6 +8,8 @@ import math
 from typing import Any
 from urllib import request
 
+from .astro import ConeRegion
+from .db import RowConesearch
 from .utils import is_tz_aware
 
 FINK_ZTF_CONESEARCH_URL = "https://api.ztf.fink-portal.org/api/v1/conesearch"
@@ -116,3 +120,43 @@ def conesearch_fink_ztf(
     else:
         response = opener(http_request, timeout=timeout)
     return FinkConesearchResult(request=payload, content=response.read())
+
+
+@dataclass(frozen=True)
+class ConesearchMetadata:
+    """Public cone-search metadata exposed by the API.
+
+    ``search_region`` is reported in degrees, even though cone-search radii are
+    stored in the database and sent to Fink in arcseconds.
+    """
+
+    id: int
+    event_id: int
+    broker: str
+    survey: str
+    subject_time_start: datetime
+    subject_time_end: datetime
+    queried_at: datetime
+    search_region: ConeRegion
+    alert_count: int
+    created_at: datetime
+
+
+def conesearch_metadata(conesearch: RowConesearch) -> ConesearchMetadata:
+    """Build public API cone-search metadata from a database cone-search row."""
+    return ConesearchMetadata(
+        id=conesearch.id,
+        event_id=conesearch.event_id,
+        broker=conesearch.broker,
+        survey=conesearch.survey,
+        subject_time_start=conesearch.subject_time_start,
+        subject_time_end=conesearch.subject_time_end,
+        queried_at=conesearch.queried_at,
+        search_region=ConeRegion(
+            ra=conesearch.ra,
+            dec=conesearch.dec,
+            err_radius=conesearch.radius_arcsec / 3600,
+        ),
+        alert_count=conesearch.alert_count,
+        created_at=conesearch.created_at,
+    )

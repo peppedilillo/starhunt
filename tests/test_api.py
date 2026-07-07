@@ -362,14 +362,48 @@ def test_timeline_returns_notice_and_conesearch_milestones_oldest_first(db_conn)
         "2026-01-01T00:05:00Z",
         "2026-01-02T00:00:00Z",
     ]
-    assert milestones[0]["content"]["id"] == conesearch_id
-    assert milestones[0]["content"]["event_id"] == event_id
-    assert milestones[0]["content"]["job_id"] == job_id
-    assert milestones[0]["content"]["result_uri"] == "file:///tmp/timeline-conesearch.json"
-    assert milestones[1]["content"]["id"] == notice_id
-    assert milestones[1]["content"]["event_id"] == event_id
-    assert milestones[1]["content"]["format"] == "voevent"
-    assert milestones[1]["content"]["raw_uri"] == "file:///tmp/timeline-notice.xml"
+    conesearch_content = milestones[0]["content"]
+    conesearch_created_at = conesearch_content.pop("created_at")
+    assert conesearch_created_at is not None
+    assert conesearch_content == {
+        "id": conesearch_id,
+        "event_id": event_id,
+        "broker": "fink",
+        "survey": "ztf",
+        "subject_time_start": "2026-01-01T00:00:00Z",
+        "subject_time_end": "2026-01-01T01:00:00Z",
+        "queried_at": "2026-01-01T00:05:00Z",
+        "search_region": {
+            "ra": 1.0,
+            "dec": 2.0,
+            "err_radius": 3 / 3600,
+            "units": "degrees",
+        },
+        "alert_count": 1,
+    }
+    assert "job_id" not in milestones[0]["content"]
+    assert "result_uri" not in milestones[0]["content"]
+    assert "radius_arcsec" not in milestones[0]["content"]
+
+    notice_content = milestones[1]["content"]
+    notice_created_at = notice_content.pop("created_at")
+    assert notice_created_at is not None
+    assert notice_content == {
+        "id": notice_id,
+        "event_id": event_id,
+        "format": "voevent",
+        "topic": "gcn.classic.voevent.FERMI_GBM_ALERT",
+        "mission": "Fermi",
+        "instrument": "GBM",
+        "published_at": "2026-01-02T00:00:00Z",
+        "burst_datetime": "2026-01-02T00:00:00Z",
+        "localization": None,
+        "is_retraction": False,
+        "retracted_by": None,
+    }
+    assert "kafka_partition" not in milestones[1]["content"]
+    assert "kafka_offset" not in milestones[1]["content"]
+    assert "raw_uri" not in milestones[1]["content"]
     assert "ivorn" not in milestones[1]["content"]
 
 
@@ -413,15 +447,24 @@ def test_notice_returns_metadata_and_parsed_voevent_payload(db_conn, tmp_path):
 
     assert response.status_code == 200
     body = response.json()
+    created_at = body["metadata"].pop("created_at")
+    assert created_at is not None
     assert body["metadata"] == {
+        "id": notice_id,
         "event_id": event_id,
         "format": "voevent",
         "topic": topic,
-        "instrument": "GBM",
         "mission": "Fermi",
-        "published_at": "2026-01-03T00:00:00+00:00",
+        "instrument": "GBM",
+        "published_at": "2026-01-03T00:00:00Z",
+        "burst_datetime": "2026-01-03T00:00:00Z",
+        "localization": None,
         "is_retraction": False,
+        "retracted_by": None,
     }
+    assert "kafka_partition" not in body["metadata"]
+    assert "kafka_offset" not in body["metadata"]
+    assert "raw_uri" not in body["metadata"]
     assert body["payload"]["ivorn"].startswith("ivo://nasa.gsfc.gcn/Fermi#")
     assert body["payload"]["trig_id"] is not None
 
@@ -456,15 +499,24 @@ def test_notice_returns_metadata_and_parsed_json_payload(db_conn, tmp_path):
 
     assert response.status_code == 200
     body = response.json()
+    created_at = body["metadata"].pop("created_at")
+    assert created_at is not None
     assert body["metadata"] == {
+        "id": notice_id,
         "event_id": event_id,
         "format": "json",
         "topic": topic,
-        "instrument": "WXT",
         "mission": "Einstein Probe",
-        "published_at": "2026-01-04T00:00:00+00:00",
+        "instrument": "WXT",
+        "published_at": "2026-01-04T00:00:00Z",
+        "burst_datetime": "2026-01-04T00:00:00Z",
+        "localization": None,
         "is_retraction": False,
+        "retracted_by": None,
     }
+    assert "kafka_partition" not in body["metadata"]
+    assert "kafka_offset" not in body["metadata"]
+    assert "raw_uri" not in body["metadata"]
     assert body["payload"]["instrument"] == "WXT"
     assert len(body["payload"]["id"]) == 1
 
@@ -540,19 +592,27 @@ def test_conesearch_returns_metadata_and_parsed_result_payload(db_conn, tmp_path
 
     assert response.status_code == 200
     body = response.json()
+    created_at = body["metadata"].pop("created_at")
+    assert created_at is not None
     assert body["metadata"] == {
+        "id": conesearch_id,
         "event_id": event_id,
-        "job_id": job_id,
         "broker": "fink",
         "survey": "ztf",
-        "subject_time_start": "2026-01-06T00:00:00+00:00",
-        "subject_time_end": "2026-01-06T01:00:00+00:00",
-        "queried_at": "2026-01-06T00:05:00+00:00",
-        "ra": 193.821,
-        "dec": 2.897,
-        "radius_arcsec": 180.0,
+        "subject_time_start": "2026-01-06T00:00:00Z",
+        "subject_time_end": "2026-01-06T01:00:00Z",
+        "queried_at": "2026-01-06T00:05:00Z",
+        "search_region": {
+            "ra": 193.821,
+            "dec": 2.897,
+            "err_radius": 0.05,
+            "units": "degrees",
+        },
         "alert_count": 1,
     }
+    assert "job_id" not in body["metadata"]
+    assert "result_uri" not in body["metadata"]
+    assert "radius_arcsec" not in body["metadata"]
     assert body["payload"][0]["i:objectId"] == "ZTF21abfmbix"
 
 
@@ -584,7 +644,14 @@ def test_conesearch_returns_empty_payload_for_zero_alert_search(db_conn):
     app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert response.json()["payload"] == []
+    body = response.json()
+    assert body["metadata"]["search_region"] == {
+        "ra": 10.0,
+        "dec": 20.0,
+        "err_radius": 30 / 3600,
+        "units": "degrees",
+    }
+    assert body["payload"] == []
 
 
 def test_conesearch_returns_404_for_unknown_conesearch(db_conn):

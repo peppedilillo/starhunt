@@ -6,13 +6,13 @@ import os
 import psycopg
 from psycopg import Connection
 
-from .astro import Localization
+from .astro import ConeRegion
 from .events import EventSummary
 
 
 @dataclass(frozen=True)
 class RowEvent:
-    """Event row metadata."""
+    """Database event row."""
 
     id: int
     external_id: str
@@ -21,7 +21,7 @@ class RowEvent:
 
 @dataclass(frozen=True)
 class RowNotice:
-    """Notice row metadata."""
+    """Database notice row, including storage and Kafka fields."""
 
     id: int
     event_id: int
@@ -44,7 +44,7 @@ class RowNotice:
 
 @dataclass(frozen=True)
 class RowConesearch:
-    """Cone-search row metadata."""
+    """Database cone-search row, including storage and job fields."""
 
     id: int
     event_id: int
@@ -185,7 +185,11 @@ def get_events_summary(
     tstart: datetime | None = None,
     tstop: datetime | None = None,
 ) -> list[EventSummary]:
-    """Return event summaries ordered by creation time.
+    """Return API event summaries ordered by creation time.
+
+    ``last_updated`` and ``conesearch_count`` follow timeline semantics:
+    notices always count, while cone-searches count only when they returned
+    alerts.
 
     Args:
         cursor: Database cursor.
@@ -193,7 +197,7 @@ def get_events_summary(
         tstop: Exclusive created_at upper bound.
 
     Returns:
-        Event summaries in creation order.
+        Event summaries in creation order, oldest first.
     """
     where_clauses = []
     params = {}
@@ -292,7 +296,7 @@ def get_events_summary(
     ) in cursor.fetchall():
         latest_localization = None
         if ra is not None:
-            latest_localization = Localization(ra=ra, dec=dec, err_radius=err_radius)
+            latest_localization = ConeRegion(ra=ra, dec=dec, err_radius=err_radius)
         summaries.append(
             EventSummary(
                 id=event_id,
@@ -884,7 +888,7 @@ def claim_expired_jobs(
     return len(cursor.fetchall())
 
 
-def find_best_localization(cursor, event_id: int, cutoff_at: datetime) -> Localization | None:
+def find_best_localization(cursor, event_id: int, cutoff_at: datetime) -> ConeRegion | None:
     """Find the latest notice localization at or before ``cutoff_at``.
 
     Args:
@@ -893,7 +897,7 @@ def find_best_localization(cursor, event_id: int, cutoff_at: datetime) -> Locali
         cutoff_at: Publication-time cutoff for candidate localizations.
 
     Returns:
-        A Localization if available, else None.
+        A cone region if available, else None.
     """
     cursor.execute(
         """
@@ -921,7 +925,7 @@ def find_best_localization(cursor, event_id: int, cutoff_at: datetime) -> Locali
     row = cursor.fetchone()
     if row is None:
         return None
-    return Localization(*row)
+    return ConeRegion(*row)
 
 
 def mark_job_succeeded(cursor, job_id: int):

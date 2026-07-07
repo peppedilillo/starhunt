@@ -7,7 +7,7 @@ Tools for searching optical counterparts to high-energy astrophysical transients
 ```shell
 cp .env.sample .env
 ${EDITOR:-vi} .env
-mkdir -p artifacts # stores raw notices and non-empty broker responses
+mkdir -p artifacts # stores raw notices and non-empty cone-search responses
 docker compose --env-file .env build
 docker compose --env-file .env up -d
 docker compose --env-file .env ps

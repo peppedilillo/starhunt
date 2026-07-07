@@ -1,20 +1,24 @@
-"""Timeline projection helpers."""
+"""Timeline response projection helpers."""
 
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
+from .conesearches import conesearch_metadata
+from .conesearches import ConesearchMetadata
 from .db import RowConesearch
 from .db import RowNotice
+from .notices import notice_metadata
+from .notices import NoticeMetadata
 
 
 @dataclass(frozen=True)
 class Milestone:
-    """Timeline milestone with a common time and typed content."""
+    """Timeline milestone with public notice or cone-search metadata."""
 
     type: Literal["notice", "conesearch"]
     time: datetime
-    content: RowNotice | RowConesearch
+    content: NoticeMetadata | ConesearchMetadata
 
 
 def build_event_milestones(notices: list[RowNotice], conesearches: list[RowConesearch]) -> list[Milestone]:
@@ -22,6 +26,7 @@ def build_event_milestones(notices: list[RowNotice], conesearches: list[RowCones
 
     Notice milestones are timed by ``published_at``. Cone-search milestones are
     timed by ``queried_at`` and only emitted when the search returned alerts.
+    Milestone content is projected into public API metadata models.
 
     Args:
         notices: Notice rows for the event.
@@ -30,9 +35,11 @@ def build_event_milestones(notices: list[RowNotice], conesearches: list[RowCones
     Returns:
         Milestones ordered by timeline time, oldest first.
     """
-    milestones = [Milestone(type="notice", time=notice.published_at, content=notice) for notice in notices]
+    milestones = [
+        Milestone(type="notice", time=notice.published_at, content=notice_metadata(notice)) for notice in notices
+    ]
     milestones.extend(
-        Milestone(type="conesearch", time=conesearch.queried_at, content=conesearch)
+        Milestone(type="conesearch", time=conesearch.queried_at, content=conesearch_metadata(conesearch))
         for conesearch in conesearches
         if conesearch.alert_count > 0
     )

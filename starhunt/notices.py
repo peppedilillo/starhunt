@@ -1,3 +1,5 @@
+"""Notice parsing, normalization, and API metadata models."""
+
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
@@ -14,7 +16,8 @@ from gcn_parser.svom import parse_svom_mxt
 from gcn_parser.svom import parse_svom_retraction
 from gcn_parser.svom import SvomRetraction
 
-from .astro import Localization
+from .astro import ConeRegion
+from .db import RowNotice
 
 
 def _parse_svom_grm_topic(value: bytes):
@@ -90,7 +93,7 @@ def parse_notice(payload: bytes, topic: str):
 
     Args:
         payload: the notice content, e.g. `message.value()`
-        topic: the notice topic, e.g. `message.topic()
+        topic: the notice topic, e.g. `message.topic()`
 
     Returns:
         a `gcn_parser.Notice`.
@@ -107,10 +110,10 @@ def parse_notice(payload: bytes, topic: str):
 
 @dataclass(frozen=True)
 class NormalizedNotice:
-    """A normalized GCN notice."""
+    """A normalized GCN notice for the Kafka consumer."""
 
     burst_id: str
-    localization: Localization | None
+    localization: ConeRegion | None
     published_at: datetime
     burst_datetime: datetime
     mission: str
@@ -120,14 +123,14 @@ class NormalizedNotice:
 
 @dataclass(frozen=True)
 class NormalizedNoticeVOEvent(NormalizedNotice):
-    """A normalized VOEvent notice."""
+    """A normalized VOEvent notice for the Kafka consumer."""
 
     ivorn: str
 
 
 @dataclass(frozen=True)
 class NormalizedNoticeJSON(NormalizedNotice):
-    """A normalized JSON notice."""
+    """A normalized JSON notice for the Kafka consumer."""
 
 
 def normalize_notice(payload: bytes, topic: str) -> NormalizedNoticeVOEvent | NormalizedNoticeJSON:
@@ -136,20 +139,20 @@ def normalize_notice(payload: bytes, topic: str) -> NormalizedNoticeVOEvent | No
 
     Args:
         payload: the notice content, e.g. `message.value()`
-        topic: the notice topic, e.g. `message.topic()
+        topic: the notice topic, e.g. `message.topic()`
 
     Returns:
-        a NoticeVOEvent or NoticeJSON, based on the notice format.
+        A normalized ingestion notice, based on the notice format.
 
     Raises:
         UnsupportedTopic: If the notice topic is not supported.
     """
 
-    def notice_localization(ra: float | None, dec: float | None, err_radius: float | None) -> Localization | None:
-        """Normalize parsed notice coordinates into a localization struct."""
+    def notice_localization(ra: float | None, dec: float | None, err_radius: float | None) -> ConeRegion | None:
+        """Normalize parsed notice coordinates into a cone region."""
         if ra is None or dec is None or err_radius is None or err_radius <= 0:
             return None
-        return Localization(ra=ra, dec=dec, err_radius=err_radius)
+        return ConeRegion(ra=ra, dec=dec, err_radius=err_radius)
 
     parsed_notice = parse_notice(payload, topic)
 
@@ -226,3 +229,42 @@ def normalize_notice(payload: bytes, topic: str) -> NormalizedNoticeVOEvent | No
             )
         case _:
             assert False, "Somehow reached unreachable branch."
+
+
+@dataclass(frozen=True)
+class NoticeMetadata:
+    """Public notice metadata exposed by the API."""
+
+    id: int
+    event_id: int
+    format: str
+    topic: str
+    mission: str
+    instrument: str
+    published_at: datetime
+    burst_datetime: datetime
+    localization: ConeRegion | None
+    is_retraction: bool
+    retracted_by: int | None
+    created_at: datetime
+
+
+def notice_metadata(notice: RowNotice) -> NoticeMetadata:
+    """Build public API notice metadata from a database notice row."""
+    localization = None
+    if notice.ra is not None:
+        localization = ConeRegion(ra=notice.ra, dec=notice.dec, err_radius=notice.err_radius)
+    return NoticeMetadata(
+        id=notice.id,
+        event_id=notice.event_id,
+        format=notice.format,
+        topic=notice.topic,
+        mission=notice.mission,
+        instrument=notice.instrument,
+        published_at=notice.published_at,
+        burst_datetime=notice.burst_datetime,
+        localization=localization,
+        is_retraction=notice.is_retraction,
+        retracted_by=notice.retracted_by,
+        created_at=notice.created_at,
+    )

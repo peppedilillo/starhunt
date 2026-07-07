@@ -81,6 +81,8 @@ def test_build_event_milestones_merges_oldest_first():
         ("notice", middle, 1),
         ("notice", latest, 2),
     ]
+    assert milestones[0].content.search_region.err_radius == 3 / 3600
+    assert milestones[1].content.localization is None
 
 
 def test_build_event_milestones_orders_ties_by_type_then_source_id():
@@ -121,3 +123,27 @@ def test_build_event_milestones_skips_zero_alert_conesearches():
     assert [(milestone.type, milestone.content.id) for milestone in milestones] == [
         ("notice", 1),
     ]
+
+
+def test_build_event_milestones_returns_public_metadata_content():
+    notice_time = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    conesearch_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    milestones = build_event_milestones(
+        notices=[
+            make_notice(notice_id=1, published_at=notice_time),
+        ],
+        conesearches=[
+            make_conesearch(conesearch_id=1, subject_time_start=conesearch_time),
+        ],
+    )
+
+    conesearch_content = milestones[0].content
+    notice_content = milestones[1].content
+    assert not hasattr(conesearch_content, "job_id")
+    assert not hasattr(conesearch_content, "result_uri")
+    assert not hasattr(conesearch_content, "radius_arcsec")
+    assert conesearch_content.search_region.units == "degrees"
+    assert not hasattr(notice_content, "kafka_partition")
+    assert not hasattr(notice_content, "kafka_offset")
+    assert not hasattr(notice_content, "raw_uri")
