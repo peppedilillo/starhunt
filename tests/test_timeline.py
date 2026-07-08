@@ -2,13 +2,13 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 
-from starhunt.db import RowConesearch
-from starhunt.db import RowNotice
+from starhunt.db import ConesearchRow
+from starhunt.db import NoticeRow
 from starhunt.timeline import build_event_milestones
 
 
-def make_notice(*, notice_id: int, published_at: datetime) -> RowNotice:
-    return RowNotice(
+def make_notice(*, notice_id: int, published_at: datetime) -> NoticeRow:
+    return NoticeRow(
         id=notice_id,
         event_id=1,
         format="voevent",
@@ -35,11 +35,11 @@ def make_conesearch(
     subject_time_start: datetime,
     queried_at: datetime | None = None,
     alert_count: int = 1,
-) -> RowConesearch:
+) -> ConesearchRow:
     if queried_at is None:
         queried_at = subject_time_start + timedelta(minutes=5)
 
-    return RowConesearch(
+    return ConesearchRow(
         id=conesearch_id,
         event_id=1,
         job_id=conesearch_id,
@@ -50,9 +50,9 @@ def make_conesearch(
         queried_at=queried_at,
         ra=1,
         dec=2,
-        radius_arcsec=3,
+        radius=3,
         alert_count=alert_count,
-        result_uri=f"file:///tmp/conesearch-{conesearch_id}.json" if alert_count > 0 else None,
+        result_uri=(f"file:///tmp/conesearch-{conesearch_id}.json" if alert_count > 0 else None),
         created_at=subject_time_start,
     )
 
@@ -81,7 +81,7 @@ def test_build_event_milestones_merges_oldest_first():
         ("notice", middle, 1),
         ("notice", latest, 2),
     ]
-    assert milestones[0].content.search_region.err_radius == 3 / 3600
+    assert milestones[0].content.search_region.err_radius == 3
     assert milestones[1].content.localization is None
 
 
@@ -142,7 +142,7 @@ def test_build_event_milestones_returns_public_metadata_content():
     notice_content = milestones[1].content
     assert not hasattr(conesearch_content, "job_id")
     assert not hasattr(conesearch_content, "result_uri")
-    assert not hasattr(conesearch_content, "radius_arcsec")
+    assert not hasattr(conesearch_content, "radius")
     assert conesearch_content.search_region.units == "degrees"
     assert not hasattr(notice_content, "kafka_partition")
     assert not hasattr(notice_content, "kafka_offset")

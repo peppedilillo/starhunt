@@ -16,8 +16,9 @@ from gcn_parser.svom import parse_svom_mxt
 from gcn_parser.svom import parse_svom_retraction
 from gcn_parser.svom import SvomRetraction
 
+from .astro import cone_region_from_coordinates
 from .astro import ConeRegion
-from .db import RowNotice
+from .db import NoticeRow
 
 
 def _parse_svom_grm_topic(value: bytes):
@@ -249,11 +250,8 @@ class NoticeMetadata:
     created_at: datetime
 
 
-def notice_metadata(notice: RowNotice) -> NoticeMetadata:
+def notice_metadata_from_row(notice: NoticeRow) -> NoticeMetadata:
     """Build public API notice metadata from a database notice row."""
-    localization = None
-    if notice.ra is not None:
-        localization = ConeRegion(ra=notice.ra, dec=notice.dec, err_radius=notice.err_radius)
     return NoticeMetadata(
         id=notice.id,
         event_id=notice.event_id,
@@ -263,7 +261,7 @@ def notice_metadata(notice: RowNotice) -> NoticeMetadata:
         instrument=notice.instrument,
         published_at=notice.published_at,
         burst_datetime=notice.burst_datetime,
-        localization=localization,
+        localization=cone_region_from_coordinates(notice.ra, notice.dec, notice.err_radius),
         is_retraction=notice.is_retraction,
         retracted_by=notice.retracted_by,
         created_at=notice.created_at,

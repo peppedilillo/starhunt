@@ -12,7 +12,7 @@ import pytest
 
 from starhunt import consumer
 from starhunt import worker
-from starhunt.db import Job
+from starhunt.db import JobRow
 from starhunt.logging import configure_logging
 from starhunt.logging import JsonFormatter
 
@@ -250,16 +250,24 @@ class FakeConsumer:
 
 def make_job(*, attempt_count=1, max_attempts=3, job_type=consumer.ZTF_CONESEARCH_JOB_TYPE):
     now = datetime.now(timezone.utc)
-    return Job(
-        job_id=17,
+    return JobRow(
+        id=17,
         event_id=23,
         job_type=job_type,
-        scheduled_at=now,
-        run_after=now,
         subject_time_start=now,
         subject_time_end=now,
+        scheduled_at=now,
+        run_after=now,
+        status="running",
         attempt_count=attempt_count,
         max_attempts=max_attempts,
+        worker_id="test-worker",
+        lease_until=now,
+        started_at=now,
+        completed_at=None,
+        payload={},
+        last_error=None,
+        created_at=now,
     )
 
 

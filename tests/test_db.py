@@ -11,8 +11,9 @@ from conftest import parsed_notice
 import psycopg
 import pytest
 
-from starhunt.astro import ConeRegion
-from starhunt.db import find_best_localization
+from starhunt.db import EventRow
+from starhunt.db import EventSummaryRow
+from starhunt.db import find_best_localized_notice
 from starhunt.db import get_event
 from starhunt.db import get_event_by_id
 from starhunt.db import get_event_conesearches
@@ -24,8 +25,6 @@ from starhunt.db import insert_notice_json
 from starhunt.db import insert_notice_voevent
 from starhunt.db import list_events
 from starhunt.db import mark_retracted_notices
-from starhunt.db import RowEvent
-from starhunt.events import EventSummary
 
 
 def insert_event_at(conn, *, external_id: str, created_at: datetime) -> int:
@@ -96,7 +95,7 @@ def test_get_event_returns_event_dataclass(db_conn):
         event = get_event(cur, external_id="Fermi:test-existing-event")
 
     assert event is not None
-    assert event == RowEvent(
+    assert event == EventRow(
         id=event_id,
         external_id="Fermi:test-existing-event",
         created_at=event.created_at,
@@ -110,7 +109,7 @@ def test_get_event_by_id_returns_event_dataclass(db_conn):
         event = get_event_by_id(cur, event_id=event_id)
 
     assert event is not None
-    assert event == RowEvent(
+    assert event == EventRow(
         id=event_id,
         external_id="Fermi:test-existing-event-by-id",
         created_at=event.created_at,
@@ -145,7 +144,11 @@ def test_list_events_returns_events_oldest_first(db_conn):
 
 def test_list_events_filters_tstart_inclusively(db_conn):
     tstart = datetime(2026, 1, 2, tzinfo=timezone.utc)
-    insert_event_at(db_conn, external_id="Fermi:before", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    insert_event_at(
+        db_conn,
+        external_id="Fermi:before",
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
     insert_event_at(db_conn, external_id="Fermi:at-start", created_at=tstart)
 
     with db_conn.cursor() as cur:
@@ -156,7 +159,11 @@ def test_list_events_filters_tstart_inclusively(db_conn):
 
 def test_list_events_filters_tstop_exclusively(db_conn):
     tstop = datetime(2026, 1, 2, tzinfo=timezone.utc)
-    insert_event_at(db_conn, external_id="Fermi:before-stop", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    insert_event_at(
+        db_conn,
+        external_id="Fermi:before-stop",
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
     insert_event_at(db_conn, external_id="Fermi:at-stop", created_at=tstop)
 
     with db_conn.cursor() as cur:
@@ -169,9 +176,17 @@ def test_list_events_filters_half_open_interval(db_conn):
     tstart = datetime(2026, 1, 2, tzinfo=timezone.utc)
     tstop = datetime(2026, 1, 4, tzinfo=timezone.utc)
 
-    insert_event_at(db_conn, external_id="Fermi:before", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    insert_event_at(
+        db_conn,
+        external_id="Fermi:before",
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
     insert_event_at(db_conn, external_id="Fermi:start", created_at=tstart)
-    insert_event_at(db_conn, external_id="Fermi:middle", created_at=datetime(2026, 1, 3, tzinfo=timezone.utc))
+    insert_event_at(
+        db_conn,
+        external_id="Fermi:middle",
+        created_at=datetime(2026, 1, 3, tzinfo=timezone.utc),
+    )
     insert_event_at(db_conn, external_id="Fermi:stop", created_at=tstop)
 
     with db_conn.cursor() as cur:
@@ -188,7 +203,7 @@ def test_get_events_summary_returns_empty_event_summary(db_conn):
         summaries = get_events_summary(cur)
 
     assert summaries == [
-        EventSummary(
+        EventSummaryRow(
             id=event_id,
             external_id="Fermi:summary-empty",
             created_at=created_at,
@@ -196,7 +211,9 @@ def test_get_events_summary_returns_empty_event_summary(db_conn):
             notice_count=0,
             conesearch_count=0,
             latest_burst_datetime=None,
-            latest_localization=None,
+            latest_localization_ra=None,
+            latest_localization_dec=None,
+            latest_localization_err_radius=None,
         )
     ]
 
@@ -235,7 +252,7 @@ def test_get_events_summary_counts_timeline_milestones(db_conn):
             queried_at=alert_conesearch_time,
             ra=1,
             dec=2,
-            radius_arcsec=3,
+            radius=3,
             alert_count=1,
             result_uri="file:///tmp/summary-counts.json",
         )
@@ -251,7 +268,7 @@ def test_get_events_summary_counts_timeline_milestones(db_conn):
             queried_at=empty_conesearch_time,
             ra=1,
             dec=2,
-            radius_arcsec=3,
+            radius=3,
             alert_count=0,
             result_uri=None,
         )
@@ -344,22 +361,35 @@ def test_get_events_summary_returns_latest_unretracted_localization(db_conn):
 
         summaries = get_events_summary(cur)
 
-    assert summaries[0].latest_localization == ConeRegion(ra=1, dec=2, err_radius=0.1)
+    assert summaries[0].latest_localization_ra == 1
+    assert summaries[0].latest_localization_dec == 2
+    assert summaries[0].latest_localization_err_radius == 0.1
 
 
 def test_get_events_summary_filters_event_created_at_interval(db_conn):
     tstart = datetime(2026, 1, 2, tzinfo=timezone.utc)
     tstop = datetime(2026, 1, 4, tzinfo=timezone.utc)
 
-    insert_event_at(db_conn, external_id="Fermi:summary-before", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    insert_event_at(
+        db_conn,
+        external_id="Fermi:summary-before",
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
     insert_event_at(db_conn, external_id="Fermi:summary-start", created_at=tstart)
-    insert_event_at(db_conn, external_id="Fermi:summary-middle", created_at=datetime(2026, 1, 3, tzinfo=timezone.utc))
+    insert_event_at(
+        db_conn,
+        external_id="Fermi:summary-middle",
+        created_at=datetime(2026, 1, 3, tzinfo=timezone.utc),
+    )
     insert_event_at(db_conn, external_id="Fermi:summary-stop", created_at=tstop)
 
     with db_conn.cursor() as cur:
         summaries = get_events_summary(cur, tstart=tstart, tstop=tstop)
 
-    assert [summary.external_id for summary in summaries] == ["Fermi:summary-start", "Fermi:summary-middle"]
+    assert [summary.external_id for summary in summaries] == [
+        "Fermi:summary-start",
+        "Fermi:summary-middle",
+    ]
 
 
 def test_get_event_notices_returns_full_rows_in_published_order(db_conn):
@@ -425,7 +455,7 @@ def test_get_event_conesearches_returns_full_rows_in_subject_order(db_conn):
             queried_at=later + timedelta(minutes=5),
             ra=1,
             dec=2,
-            radius_arcsec=3,
+            radius=3,
             alert_count=0,
             result_uri=None,
         )
@@ -441,7 +471,7 @@ def test_get_event_conesearches_returns_full_rows_in_subject_order(db_conn):
             queried_at=earlier + timedelta(minutes=5),
             ra=4,
             dec=5,
-            radius_arcsec=6,
+            radius=6,
             alert_count=1,
             result_uri="file:///tmp/timeline-conesearches-earlier.json",
         )
@@ -541,7 +571,9 @@ def test_insert_notice_json_is_idempotent_by_kafka_coordinates(db_conn):
     assert voevent_count == 0
 
 
-def test_insert_notice_voevent_rejects_duplicate_ivorn_at_different_kafka_coordinates(db_conn):
+def test_insert_notice_voevent_rejects_duplicate_ivorn_at_different_kafka_coordinates(
+    db_conn,
+):
     published_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
     with db_conn.cursor() as cur:
@@ -580,7 +612,7 @@ def test_insert_notice_voevent_rejects_duplicate_ivorn_at_different_kafka_coordi
     db_conn.rollback()
 
 
-def test_find_best_localization_returns_none_without_localization(db_conn):
+def test_find_best_localized_notice_returns_none_without_localization(db_conn):
     path = alert_only_fixture()
     notice = normalized_notice(path)
     insert_fixture(db_conn, path)
@@ -591,16 +623,16 @@ def test_find_best_localization_returns_none_without_localization(db_conn):
             (event_external_id(path),),
         )
         event_id = cur.fetchone()[0]
-        localization = find_best_localization(
+        best_notice = find_best_localized_notice(
             cur,
             event_id=event_id,
             cutoff_at=notice.published_at + timedelta(hours=1),
         )
 
-    assert localization is None
+    assert best_notice is None
 
 
-def test_find_best_localization_returns_latest_usable_localization(db_conn):
+def test_find_best_localized_notice_returns_latest_usable_localization(db_conn):
     paths = localization_fixtures(2)
     for path in paths[:2]:
         insert_fixture(db_conn, path)
@@ -615,25 +647,26 @@ def test_find_best_localization_returns_latest_usable_localization(db_conn):
             (event_external_id(paths[1]),),
         )
         event_id = cur.fetchone()[0]
-        localization = find_best_localization(
+        best_notice = find_best_localized_notice(
             cur,
             event_id=event_id,
             cutoff_at=latest_normalized.published_at + timedelta(seconds=1),
         )
 
-    assert localization == ConeRegion(
-        ra=latest_notice.ra,
-        dec=latest_notice.dec,
-        err_radius=latest_notice.error_radius,
+    assert best_notice is not None
+    assert (best_notice.ra, best_notice.dec, best_notice.err_radius) == (
+        latest_notice.ra,
+        latest_notice.dec,
+        latest_notice.error_radius,
     )
-    assert localization != ConeRegion(
-        ra=earlier_notice.ra,
-        dec=earlier_notice.dec,
-        err_radius=earlier_notice.error_radius,
+    assert (best_notice.ra, best_notice.dec, best_notice.err_radius) != (
+        earlier_notice.ra,
+        earlier_notice.dec,
+        earlier_notice.error_radius,
     )
 
 
-def test_find_best_localization_ignores_future_publications(db_conn):
+def test_find_best_localized_notice_ignores_future_publications(db_conn):
     paths = localization_fixtures(2)
     for path in paths[:2]:
         insert_fixture(db_conn, path)
@@ -647,20 +680,21 @@ def test_find_best_localization_ignores_future_publications(db_conn):
             (event_external_id(paths[0]),),
         )
         event_id = cur.fetchone()[0]
-        localization = find_best_localization(
+        best_notice = find_best_localized_notice(
             cur,
             event_id=event_id,
             cutoff_at=later_normalized.published_at - timedelta(seconds=1),
         )
 
-    assert localization == ConeRegion(
-        ra=earlier_notice.ra,
-        dec=earlier_notice.dec,
-        err_radius=earlier_notice.error_radius,
+    assert best_notice is not None
+    assert (best_notice.ra, best_notice.dec, best_notice.err_radius) == (
+        earlier_notice.ra,
+        earlier_notice.dec,
+        earlier_notice.error_radius,
     )
 
 
-def test_find_best_localization_ignores_conesearch_coordinates(db_conn):
+def test_find_best_localized_notice_ignores_conesearch_coordinates(db_conn):
     path = localization_fixtures(1)[0]
     notice = parsed_notice(path)
     normalized = normalized_notice(path)
@@ -695,7 +729,7 @@ def test_find_best_localization_ignores_conesearch_coordinates(db_conn):
                 queried_at,
                 ra,
                 dec,
-                radius_arcsec,
+                radius,
                 alert_count
             )
             VALUES (%s, %s, 'fink', 'ztf', %s, %s, %s, 1, 2, 3, 0)
@@ -708,20 +742,23 @@ def test_find_best_localization_ignores_conesearch_coordinates(db_conn):
                 normalized.published_at + timedelta(hours=1),
             ),
         )
-        localization = find_best_localization(
+        best_notice = find_best_localized_notice(
             cur,
             event_id=event_id,
             cutoff_at=normalized.published_at + timedelta(hours=2),
         )
 
-    assert localization == ConeRegion(
-        ra=notice.ra,
-        dec=notice.dec,
-        err_radius=notice.error_radius,
+    assert best_notice is not None
+    assert (best_notice.ra, best_notice.dec, best_notice.err_radius) == (
+        notice.ra,
+        notice.dec,
+        notice.error_radius,
     )
 
 
-def test_find_best_localization_ignores_localization_retracted_before_cutoff(db_conn):
+def test_find_best_localized_notice_ignores_localization_retracted_before_cutoff(
+    db_conn,
+):
     published_at = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
     retracted_at = published_at + timedelta(minutes=10)
     cutoff_at = published_at + timedelta(minutes=20)
@@ -766,12 +803,12 @@ def test_find_best_localization_ignores_localization_retracted_before_cutoff(db_
             target_ivorns=("ivo://org.svom/fsc#retracted-before-cutoff_slewing",),
         )
 
-        localization = find_best_localization(cur, event_id, cutoff_at=cutoff_at)
+        best_notice = find_best_localized_notice(cur, event_id, cutoff_at=cutoff_at)
 
-    assert localization is None
+    assert best_notice is None
 
 
-def test_find_best_localization_keeps_localization_retracted_after_cutoff(db_conn):
+def test_find_best_localized_notice_keeps_localization_retracted_after_cutoff(db_conn):
     published_at = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
     cutoff_at = published_at + timedelta(minutes=10)
     retracted_at = published_at + timedelta(minutes=20)
@@ -816,6 +853,7 @@ def test_find_best_localization_keeps_localization_retracted_after_cutoff(db_con
             target_ivorns=("ivo://org.svom/fsc#retracted-after-cutoff_slewing",),
         )
 
-        localization = find_best_localization(cur, event_id, cutoff_at=cutoff_at)
+        best_notice = find_best_localized_notice(cur, event_id, cutoff_at=cutoff_at)
 
-    assert localization == ConeRegion(ra=1, dec=2, err_radius=0.1)
+    assert best_notice is not None
+    assert (best_notice.ra, best_notice.dec, best_notice.err_radius) == (1, 2, 0.1)

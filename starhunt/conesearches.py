@@ -1,4 +1,4 @@
-"""Cone-search client helpers and API metadata models."""
+"""Cone-search client and API metadata helpers."""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -9,7 +9,7 @@ from typing import Any
 from urllib import request
 
 from .astro import ConeRegion
-from .db import RowConesearch
+from .db import ConesearchRow
 from .utils import is_tz_aware
 
 FINK_ZTF_CONESEARCH_URL = "https://api.ztf.fink-portal.org/api/v1/conesearch"
@@ -41,7 +41,7 @@ class FinkConesearchResult:
 def conesearch_fink_ztf(
     ra: float,
     dec: float,
-    radius: float,  # in arcseconds
+    radius: float,
     startdate: datetime,
     stopdate: datetime,
     *,
@@ -53,16 +53,16 @@ def conesearch_fink_ztf(
     """
     Query the Fink ZTF conesearch endpoint for alerts in a sky/time window.
 
-    The query is centered on ``ra`` and ``dec`` in degrees, with ``radius`` in
-    arcseconds. ``startdate`` and ``stopdate`` must be timezone-aware
-    datetimes; they are converted to UTC before being sent to Fink.
-    Fink caps conesearch radii at 18,000 arcseconds. Larger requested radii are
-    accepted but capped in the outbound request.
+    The query is centered on ``ra`` and ``dec`` in degrees. ``radius`` is also
+    in degrees; it is converted to arcseconds only for the Fink request
+    payload. ``startdate`` and ``stopdate`` must be timezone-aware datetimes
+    and are sent to Fink in UTC. Fink caps cone-search radii at 18,000
+    arcseconds, so larger requests are capped in the outbound payload.
 
     Args:
         ra: Right ascension in degrees, in the inclusive range [0, 360].
         dec: Declination in degrees, in the inclusive range [-90, 90].
-        radius: Search radius in arcseconds. Must be positive.
+        radius: Search radius in degrees. Must be positive.
         startdate: Inclusive lower bound for the alert first-detection time.
         stopdate: Exclusive upper bound for the alert first-detection time.
         max_nalert: Maximum number of alerts to return.
@@ -98,11 +98,12 @@ def conesearch_fink_ztf(
 
     startdate_utc = startdate.astimezone(timezone.utc).replace(tzinfo=None).isoformat(sep=" ", timespec="milliseconds")
     stopdate_utc = stopdate.astimezone(timezone.utc).replace(tzinfo=None).isoformat(sep=" ", timespec="milliseconds")
+    radius_arcsec = radius * 3600
 
     payload = {
         "ra": ra,
         "dec": dec,
-        "radius": min(radius, MAX_CONESEARCH_RADIUS_ARCSEC),
+        "radius": min(radius_arcsec, MAX_CONESEARCH_RADIUS_ARCSEC),
         "startdate": startdate_utc,
         "stopdate": stopdate_utc,
         "n": max_nalert,
@@ -124,11 +125,7 @@ def conesearch_fink_ztf(
 
 @dataclass(frozen=True)
 class ConesearchMetadata:
-    """Public cone-search metadata exposed by the API.
-
-    ``search_region`` is reported in degrees, even though cone-search radii are
-    stored in the database and sent to Fink in arcseconds.
-    """
+    """Public cone-search metadata exposed by the API."""
 
     id: int
     event_id: int
@@ -142,7 +139,7 @@ class ConesearchMetadata:
     created_at: datetime
 
 
-def conesearch_metadata(conesearch: RowConesearch) -> ConesearchMetadata:
+def conesearch_metadata_from_row(conesearch: ConesearchRow) -> ConesearchMetadata:
     """Build public API cone-search metadata from a database cone-search row."""
     return ConesearchMetadata(
         id=conesearch.id,
@@ -155,7 +152,7 @@ def conesearch_metadata(conesearch: RowConesearch) -> ConesearchMetadata:
         search_region=ConeRegion(
             ra=conesearch.ra,
             dec=conesearch.dec,
-            err_radius=conesearch.radius_arcsec / 3600,
+            err_radius=conesearch.radius,
         ),
         alert_count=conesearch.alert_count,
         created_at=conesearch.created_at,

@@ -101,7 +101,7 @@ def create_running_job(
             SET lease_until = now() + %s
             WHERE id = %s
             """,
-            (lease_delta, job.job_id),
+            (lease_delta, job.id),
         )
     conn.commit()
     return job
@@ -118,7 +118,7 @@ def conesearch_result_row(conn, job_id: int):
                 subject_time_end,
                 ra,
                 dec,
-                radius_arcsec,
+                radius,
                 alert_count,
                 result_uri
             FROM conesearches
@@ -181,9 +181,17 @@ def test_claim_expired_jobs_requeues_retryable_running_job(db_conn):
         reclaimed = claim_expired_jobs(cur, retry_delay=retry_delay)
     db_conn.commit()
 
-    status, scheduled_at, run_after, attempt_count, lease_until, last_error, completed_at = job_recovery_state(
+    (
+        status,
+        scheduled_at,
+        run_after,
+        attempt_count,
+        lease_until,
+        last_error,
+        completed_at,
+    ) = job_recovery_state(
         db_conn,
-        job.job_id,
+        job.id,
     )
     assert reclaimed == 1
     assert status == "failed"
@@ -203,9 +211,17 @@ def test_claim_expired_jobs_dead_letters_exhausted_running_job(db_conn):
         reclaimed = claim_expired_jobs(cur, retry_delay=timedelta(minutes=10))
     db_conn.commit()
 
-    status, scheduled_at, run_after, attempt_count, lease_until, last_error, completed_at = job_recovery_state(
+    (
+        status,
+        scheduled_at,
+        run_after,
+        attempt_count,
+        lease_until,
+        last_error,
+        completed_at,
+    ) = job_recovery_state(
         db_conn,
-        job.job_id,
+        job.id,
     )
     assert reclaimed == 1
     assert status == "dead"
@@ -229,7 +245,7 @@ def test_claim_expired_jobs_leaves_active_running_job_untouched(db_conn):
         reclaimed = claim_expired_jobs(cur, retry_delay=timedelta(minutes=10))
     db_conn.commit()
 
-    status, _, _, attempt_count, lease_until, last_error, completed_at = job_recovery_state(db_conn, job.job_id)
+    status, _, _, attempt_count, lease_until, last_error, completed_at = job_recovery_state(db_conn, job.id)
     assert reclaimed == 0
     assert status == "running"
     assert attempt_count == 1
@@ -243,13 +259,13 @@ def test_reclaimed_job_attempt_count_increments_only_when_picked_again(db_conn):
 
     with db_conn.cursor() as cur:
         claim_expired_jobs(cur, retry_delay=timedelta(0))
-        status, _, _, attempt_count, _, _, _ = job_recovery_state(db_conn, job.job_id)
+        status, _, _, attempt_count, _, _, _ = job_recovery_state(db_conn, job.id)
         next_job = pick_job(cur, "replacement-worker")
     db_conn.commit()
 
     assert status == "failed"
     assert attempt_count == 1
-    assert next_job.job_id == job.job_id
+    assert next_job.id == job.id
     assert next_job.attempt_count == 2
 
 
@@ -323,20 +339,20 @@ def test_run_job_executes_conesearch_and_persists_result(db_conn, tmp_path):
     assert calls == {
         "ra": notice.ra,
         "dec": notice.dec,
-        "radius": notice.error_radius * 3600,
+        "radius": notice.error_radius,
         "startdate": job.subject_time_start,
         "stopdate": job.subject_time_end,
         "timeout": TEST_QUERY_TIMEOUT,
     }
 
-    status, scheduled_at, run_after, last_error, completed_at = job_state(db_conn, job.job_id)
+    status, scheduled_at, run_after, last_error, completed_at = job_state(db_conn, job.id)
     assert status == "succeeded"
     assert scheduled_at == job.scheduled_at
     assert run_after == job.run_after
     assert last_error is None
     assert completed_at is not None
 
-    result_row = conesearch_result_row(db_conn, job.job_id)
+    result_row = conesearch_result_row(db_conn, job.id)
     assert result_row[:8] == (
         "fink",
         "ztf",
@@ -344,7 +360,7 @@ def test_run_job_executes_conesearch_and_persists_result(db_conn, tmp_path):
         job.subject_time_end,
         notice.ra,
         notice.dec,
-        notice.error_radius * 3600,
+        notice.error_radius,
         1,
     )
     result_path = Path(result_row[8].removeprefix("file://"))
@@ -367,7 +383,7 @@ def test_run_job_missing_localization_marks_job_failed(db_conn, tmp_path):
         timeout=TEST_QUERY_TIMEOUT,
     )
 
-    status, scheduled_at, run_after, last_error, completed_at = job_state(db_conn, job.job_id)
+    status, scheduled_at, run_after, last_error, completed_at = job_state(db_conn, job.id)
     assert status == "failed"
     assert scheduled_at == job.scheduled_at
     assert run_after > job.run_after
@@ -392,24 +408,24 @@ def test_run_job_empty_result_marks_success_without_persistence(db_conn, tmp_pat
         timeout=TEST_QUERY_TIMEOUT,
     )
 
-    status, scheduled_at, run_after, last_error, completed_at = job_state(db_conn, job.job_id)
+    status, scheduled_at, run_after, last_error, completed_at = job_state(db_conn, job.id)
     assert status == "succeeded"
     assert scheduled_at == job.scheduled_at
     assert run_after == job.run_after
     assert last_error is None
     assert completed_at is not None
-    assert conesearch_result_row(db_conn, job.job_id) == (
+    assert conesearch_result_row(db_conn, job.id) == (
         "fink",
         "ztf",
         job.subject_time_start,
         job.subject_time_end,
         parsed_notice(path).ra,
         parsed_notice(path).dec,
-        parsed_notice(path).error_radius * 3600,
+        parsed_notice(path).error_radius,
         0,
         None,
     )
-    result_path = tmp_path / f"{job.job_type}_{job.job_id}.json"
+    result_path = tmp_path / f"{job.job_type}_{job.id}.json"
     assert not result_path.exists()
 
 
@@ -434,7 +450,7 @@ def test_run_job_query_failure_can_dead_letter(db_conn, tmp_path):
         timeout=TEST_QUERY_TIMEOUT,
     )
 
-    status, _, _, last_error, completed_at = job_state(db_conn, job.job_id)
+    status, _, _, last_error, completed_at = job_state(db_conn, job.id)
     assert status == "dead"
     assert last_error == "boom"
     assert completed_at is not None
@@ -481,7 +497,7 @@ def test_run_job_dead_letters_unsupported_job_type(db_conn, tmp_path):
         timeout=TEST_QUERY_TIMEOUT,
     )
 
-    status, _, _, last_error, completed_at = job_state(db_conn, job.job_id)
+    status, _, _, last_error, completed_at = job_state(db_conn, job.id)
     assert status == "dead"
     assert last_error == "Unsupported job type: unsupported_job_type"
     assert completed_at is not None

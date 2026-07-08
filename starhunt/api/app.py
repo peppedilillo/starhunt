@@ -17,7 +17,7 @@ from fastapi import Path as ApiPath
 from fastapi import Query
 from psycopg import Connection
 
-from ..conesearches import conesearch_metadata
+from ..conesearches import conesearch_metadata_from_row
 from ..db import get_conesearch
 from ..db import get_event_by_id
 from ..db import get_event_conesearches
@@ -25,7 +25,8 @@ from ..db import get_event_notices
 from ..db import get_events_summary
 from ..db import get_notice
 from ..db import init_db_conn
-from ..notices import notice_metadata
+from ..events import event_summary_from_row
+from ..notices import notice_metadata_from_row
 from ..notices import parse_notice
 from ..timeline import build_event_milestones
 from ..utils import is_tz_aware
@@ -105,7 +106,8 @@ def events(
         raise HTTPException(status_code=422, detail="tstart must be before or equal to tstop")
 
     with db_conn.cursor() as cursor:
-        return get_events_summary(cursor, tstart=tstart_utc, tstop=tstop_utc)
+        rows = get_events_summary(cursor, tstart=tstart_utc, tstop=tstop_utc)
+    return [event_summary_from_row(row) for row in rows]
 
 
 @app.get(
@@ -162,7 +164,7 @@ def notice(
 
     payload = parse_notice(payload_path.read_bytes(), row.topic)
     return NoticeResponse(
-        metadata=notice_metadata(row),
+        metadata=notice_metadata_from_row(row),
         payload=payload.model_dump(mode="json"),
     )
 
@@ -200,6 +202,6 @@ def conesearch(
         payload = json.loads(result_path.read_bytes())
 
     return ConesearchResponse(
-        metadata=conesearch_metadata(row),
+        metadata=conesearch_metadata_from_row(row),
         payload=payload,
     )

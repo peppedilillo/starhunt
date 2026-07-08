@@ -15,13 +15,14 @@ import uuid
 
 from psycopg import Connection
 
+from .astro import cone_region_from_coordinates
 from .conesearches import conesearch_fink_ztf
 from .consumer import ZTF_CONESEARCH_JOB_TYPE
 from .db import claim_expired_jobs
-from .db import find_best_localization
+from .db import find_best_localized_notice
 from .db import init_db_conn
 from .db import insert_conesearch
-from .db import Job
+from .db import JobRow
 from .db import mark_job_dead
 from .db import mark_job_failed
 from .db import mark_job_succeeded
@@ -41,7 +42,7 @@ class MissingLocalization(Exception):
     pass
 
 
-def write_response(job: Job, content: bytes, outdir: Path) -> Path:
+def write_response(job: JobRow, content: bytes, outdir: Path) -> Path:
     """Write a broker response to disk.
 
     Args:
@@ -52,14 +53,14 @@ def write_response(job: Job, content: bytes, outdir: Path) -> Path:
     Returns:
         Path to the written result file.
     """
-    filepath = outdir / f"{job.job_type}_{job.job_id}.json"
+    filepath = outdir / f"{job.job_type}_{job.id}.json"
     filepath.write_bytes(content)
     return filepath
 
 
 def execute_ztf_fink_conesearch(
     cursor,
-    job: Job,
+    job: JobRow,
     outdir: Path,
     timeout: float | None,
     query_fn=conesearch_fink_ztf,
@@ -79,9 +80,8 @@ def execute_ztf_fink_conesearch(
     Raises:
         MissingLocalization: If no usable localization is available.
     """
-    # use `scheduled_at` as the localization cutoff so retries see the same
-    #  localization as the original run. This ensures that, if query endpoint is stable,
-    # the same result will be returned regardless of the amount of retries.
+    # Use `scheduled_at` as the localization cutoff so retries use the same
+    # localization as the original run.
     #
     # An example:
     #    * event arrives at t=0 with localization, job `scheduled_at` is set to t=+1,
@@ -89,15 +89,17 @@ def execute_ztf_fink_conesearch(
     #    * a new localization arrives at t=+2
     #    * at t=3 the job runs again with the localization provided at t=0,
     #      ignoring the localization arrived at t=+2
-    localization = find_best_localization(cursor, job.event_id, job.scheduled_at)
+    notice = find_best_localized_notice(cursor, job.event_id, job.scheduled_at)
+    if notice is None:
+        raise MissingLocalization("No usable localization available for event")
+    localization = cone_region_from_coordinates(notice.ra, notice.dec, notice.err_radius)
     if localization is None:
         raise MissingLocalization("No usable localization available for event")
 
-    radius_arcsec = localization.err_radius * 3600
     result = query_fn(
         ra=localization.ra,
         dec=localization.dec,
-        radius=radius_arcsec,
+        radius=localization.err_radius,
         startdate=job.subject_time_start,
         stopdate=job.subject_time_end,
         # Prevent a stalled Fink response from holding a transaction indefinitely.
@@ -111,7 +113,7 @@ def execute_ztf_fink_conesearch(
     return insert_conesearch(
         cursor,
         event_id=job.event_id,
-        job_id=job.job_id,
+        job_id=job.id,
         broker="fink",
         survey="ztf",
         subject_time_start=job.subject_time_start,
@@ -119,7 +121,7 @@ def execute_ztf_fink_conesearch(
         queried_at=datetime.now(timezone.utc),
         ra=localization.ra,
         dec=localization.dec,
-        radius_arcsec=radius_arcsec,
+        radius=localization.err_radius,
         alert_count=len(alerts),
         result_uri=result_uri,
     )
@@ -127,7 +129,7 @@ def execute_ztf_fink_conesearch(
 
 def run_job(
     db_conn: Connection,
-    job: Job,
+    job: JobRow,
     outdir: Path,
     retry_delay: timedelta,
     timeout: float | None,
@@ -151,7 +153,7 @@ def run_job(
         query_fn: Callable used to run the conesearch query. Intended for testing.
     """
     log_context = {
-        "job_id": job.job_id,
+        "job_id": job.id,
         "event_id": job.event_id,
         "job_type": job.job_type,
         "attempt_count": job.attempt_count,
@@ -168,7 +170,7 @@ def run_job(
                     timeout=timeout,
                     query_fn=query_fn,
                 )
-                mark_job_succeeded(cursor, job.job_id)
+                mark_job_succeeded(cursor, job.id)
             db_conn.commit()
             logger.info(
                 "Job succeeded",
@@ -176,7 +178,7 @@ def run_job(
             )
         else:
             with db_conn.cursor() as cursor:
-                mark_job_dead(cursor, job.job_id, f"Unsupported job type: {job.job_type}")
+                mark_job_dead(cursor, job.id, f"Unsupported job type: {job.job_type}")
             db_conn.commit()
             logger.error(
                 "Unsupported job type",

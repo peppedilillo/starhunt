@@ -83,7 +83,7 @@ CREATE TABLE conesearches (
     queried_at timestamptz NOT NULL,
     ra double precision NOT NULL,
     dec double precision NOT NULL,
-    radius_arcsec double precision NOT NULL,
+    radius double precision NOT NULL,
     alert_count integer NOT NULL,
     result_uri text,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -91,7 +91,7 @@ CREATE TABLE conesearches (
     CHECK (subject_time_end > subject_time_start),
     CHECK (ra >= 0 AND ra <= 360),
     CHECK (dec >= -90 AND dec <= 90),
-    CHECK (radius_arcsec > 0),
+    CHECK (radius > 0),
     CHECK (alert_count >= 0),
     CHECK ((alert_count = 0 AND result_uri IS NULL) OR (alert_count > 0 AND result_uri IS NOT NULL))
 );

@@ -156,7 +156,7 @@ def test_events_returns_summary_fields(db_conn):
             queried_at=conesearch_time,
             ra=1,
             dec=2,
-            radius_arcsec=3,
+            radius=3,
             alert_count=1,
             result_uri="file:///tmp/summary-api.json",
         )
@@ -345,7 +345,7 @@ def test_timeline_returns_notice_and_conesearch_milestones_oldest_first(db_conn)
             queried_at=conesearch_time + timedelta(minutes=5),
             ra=1,
             dec=2,
-            radius_arcsec=3,
+            radius=3,
             alert_count=1,
             result_uri="file:///tmp/timeline-conesearch.json",
         )
@@ -373,17 +373,17 @@ def test_timeline_returns_notice_and_conesearch_milestones_oldest_first(db_conn)
         "subject_time_start": "2026-01-01T00:00:00Z",
         "subject_time_end": "2026-01-01T01:00:00Z",
         "queried_at": "2026-01-01T00:05:00Z",
-        "search_region": {
-            "ra": 1.0,
-            "dec": 2.0,
-            "err_radius": 3 / 3600,
-            "units": "degrees",
-        },
+            "search_region": {
+                "ra": 1.0,
+                "dec": 2.0,
+                "err_radius": 3,
+                "units": "degrees",
+            },
         "alert_count": 1,
     }
     assert "job_id" not in milestones[0]["content"]
     assert "result_uri" not in milestones[0]["content"]
-    assert "radius_arcsec" not in milestones[0]["content"]
+    assert "radius" not in milestones[0]["content"]
 
     notice_content = milestones[1]["content"]
     notice_created_at = notice_content.pop("created_at")
@@ -580,7 +580,7 @@ def test_conesearch_returns_metadata_and_parsed_result_payload(db_conn, tmp_path
             queried_at=queried_at,
             ra=193.821,
             dec=2.897,
-            radius_arcsec=180,
+            radius=0.05,
             alert_count=1,
             result_uri=result_path.resolve().as_uri(),
         )
@@ -612,7 +612,7 @@ def test_conesearch_returns_metadata_and_parsed_result_payload(db_conn, tmp_path
     }
     assert "job_id" not in body["metadata"]
     assert "result_uri" not in body["metadata"]
-    assert "radius_arcsec" not in body["metadata"]
+    assert "radius" not in body["metadata"]
     assert body["payload"][0]["i:objectId"] == "ZTF21abfmbix"
 
 
@@ -633,7 +633,7 @@ def test_conesearch_returns_empty_payload_for_zero_alert_search(db_conn):
             queried_at=subject_time_start + timedelta(minutes=5),
             ra=10,
             dec=20,
-            radius_arcsec=30,
+            radius=0.25,
             alert_count=0,
             result_uri=None,
         )
@@ -648,7 +648,7 @@ def test_conesearch_returns_empty_payload_for_zero_alert_search(db_conn):
     assert body["metadata"]["search_region"] == {
         "ra": 10.0,
         "dec": 20.0,
-        "err_radius": 30 / 3600,
+        "err_radius": 0.25,
         "units": "degrees",
     }
     assert body["payload"] == []
@@ -681,7 +681,7 @@ def test_conesearch_returns_500_when_result_file_is_missing(db_conn, tmp_path):
             queried_at=subject_time_start + timedelta(minutes=5),
             ra=10,
             dec=20,
-            radius_arcsec=30,
+            radius=0.25,
             alert_count=1,
             result_uri=(tmp_path / "missing.json").resolve().as_uri(),
         )

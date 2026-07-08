@@ -61,7 +61,7 @@ def test_conesearch_caps_radius_and_uses_stopdate():
     result = conesearch_fink_ztf(
         ra=193.822,
         dec=2.89732,
-        radius=20_000,
+        radius=6,
         startdate=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
         stopdate=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
         opener=opener,
@@ -88,7 +88,7 @@ def test_conesearch_uses_explicit_timeout():
     conesearch_fink_ztf(
         ra=193.822,
         dec=2.89732,
-        radius=5,
+        radius=0.05,
         startdate=datetime(2026, 1, 1, tzinfo=UTC),
         stopdate=datetime(2026, 1, 2, tzinfo=UTC),
         timeout=60,
@@ -96,6 +96,7 @@ def test_conesearch_uses_explicit_timeout():
     )
 
     assert opener.timeout == 60
+    assert opener.payload()["radius"] == 180
 
 
 def test_conesearch_formats_dates_in_utc():
